@@ -1,0 +1,1 @@
+python tools/abrir_editor.py

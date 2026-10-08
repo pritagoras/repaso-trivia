@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Editor de Repaso</title>
+  <meta name="theme-color" content="#170F2E">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E✏️%3C/text%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Silkscreen:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="editor.css">
+</head>
+<body>
+  <header class="barra">
+    <h1 class="logo">Editor <small>de Repaso</small></h1>
+    <div class="grupo">
+      <button class="btn" id="btn-abrir" title="Elegí la carpeta del repo (o la carpeta data) para editar lo que ya tenés">Abrir carpeta del repo</button>
+      <input type="file" id="in-carpeta" webkitdirectory multiple hidden>
+      <button class="btn" id="btn-importar" title="Pegá el JSON que te dio el LM">Pegar JSON del LM</button>
+      <button class="btn" id="btn-buscar">Buscar</button>
+      <button class="btn" id="btn-revisar">Revisar todo <span class="num" id="n-prob" hidden></span></button>
+    </div>
+    <div class="grupo derecha">
+      <span class="estado" id="estado">Sin cambios</span>
+      <button class="btn primario" id="btn-guardar">Guardar…</button>
+    </div>
+  </header>
+
+  <div id="banner" hidden></div>
+
+  <div class="cuerpo">
+    <aside id="lateral" aria-label="Materias y temas"></aside>
+    <main id="principal"></main>
+  </div>
+
+  <dialog id="modal"></dialog>
+  <div id="aviso" role="status" aria-live="polite"></div>
+
+  <script src="editor.js"></script>
+</body>
+</html>
