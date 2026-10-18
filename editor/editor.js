@@ -5,6 +5,7 @@
 // Lee la carpeta data/ del repo, te deja editar y después:
 //   - escribe los cambios directo en la carpeta (Chrome / Edge), o
 //   - descarga un ZIP con la carpeta data/ lista para pisar la del repo.
+// Las imágenes de las preguntas se reducen en el navegador y se guardan en data/img/.
 // ==========================================================
 'use strict';
 
@@ -60,12 +61,16 @@
     base: { archivos: new Map(), crudos: new Map(), secuencia: '', indice: '' },
     analisis: { lista: [], conteo: new Map(), errores: 0, avisos: 0 },
     avisosCarga: [],
+    imgs: new Map(),               // nombre de imagen -> Blob (para vista previa y para escribirla al guardar)
+    imgNuevas: new Set(),          // imágenes cargadas acá que todavía no están en la carpeta del repo
+    imgExistentes: new Set(),      // nombres que ya estaban en data/img/ al abrir la carpeta
+    imgListadoOk: false,           // true si se pudo leer data/img/ (permite avisar de imágenes faltantes)
   };
   const PROB = new WeakMap();      // pregunta -> { errores, avisos }
 
   // ---------- Modelo ----------
   const nuevaPregunta = (o = {}) => ({
-    uid: uid(), pregunta: '', opciones: ['', '', '', ''], correcta: '', explicacion: '', extra: {}, ...o,
+    uid: uid(), pregunta: '', opciones: ['', '', '', ''], correcta: '', explicacion: '', imagen: '', imagenAlt: '', extra: {}, ...o,
   });
 
   const nuevoTema = (o = {}) => ({
@@ -78,7 +83,7 @@
   });
 
   function preguntaDesdeJSON(p, avisos, ctx) {
-    const { pregunta, opciones, correcta, explicacion, ...extra } = p;
+    const { pregunta, opciones, correcta, explicacion, imagen, imagen_alt, ...extra } = p;
     const ops = Array.isArray(opciones) ? opciones.map((o) => String(o ?? '')) : [];
     if (ops.length > 4) avisos.push(`${ctx}: tenía ${ops.length} opciones; se conservaron las primeras 4.`);
     while (ops.length < 4) ops.push('');
@@ -88,9 +93,17 @@
       opciones: ops.slice(0, 4),
       correcta: LETRAS.includes(c) ? c : '',
       explicacion: String(explicacion ?? ''),
+      imagen: String(imagen ?? '').trim(),
+      imagenAlt: String(imagen_alt ?? ''),
       extra,
     });
   }
+
+  // "data/img/archivo.webp" -> "archivo.webp" (null si no apunta a data/img/)
+  const nombreImagen = (ruta) => {
+    const m = /^data\/img\/([\w.%-]+)$/.exec(String(ruta || '').trim());
+    return m ? m[1] : null;
+  };
 
   // ---------- Validación (misma lógica que tools/validar.py) ----------
   const REF_LETRA = /\b(opci[oó]n|alternativa|inciso|respuesta)\s+[A-D]\b/i;
@@ -109,6 +122,12 @@
     if (!LETRAS.includes(q.correcta)) errores.push('Marcá cuál es la opción correcta.');
     if (!norm(q.explicacion)) avisos.push('No tiene explicación (se recomienda para estudiar).');
     else if (REF_LETRA.test(q.explicacion)) avisos.push('La explicación menciona una letra de opción; el juego mezcla el orden.');
+    if (norm(q.imagen)) {
+      const n = nombreImagen(q.imagen);
+      if (!n && !/^https:\/\/\S+$/i.test(q.imagen.trim())) avisos.push('La ruta de la imagen no es válida: el juego no la va a mostrar (tiene que ser data/img/... o https://...).');
+      else if (n && E.imgListadoOk && !E.imgExistentes.has(n) && !E.imgs.has(n)) avisos.push(`La imagen "${n}" no está en data/img/.`);
+      if (!norm(q.imagenAlt)) avisos.push('La imagen no tiene descripción (sirve para accesibilidad).');
+    }
     return { errores, avisos };
   }
 
@@ -167,6 +186,8 @@
       `${sangria}"correcta": ${J(q.correcta)}`,
     ];
     if (norm(q.explicacion)) campos.push(`${sangria}"explicacion": ${J(q.explicacion)}`);
+    if (norm(q.imagen)) campos.push(`${sangria}"imagen": ${J(q.imagen.trim())}`);
+    if (norm(q.imagen) && norm(q.imagenAlt)) campos.push(`${sangria}"imagen_alt": ${J(q.imagenAlt.trim())}`);
     for (const [k, v] of Object.entries(q.extra || {})) campos.push(`${sangria}${J(k)}: ${J(v)}`);
     return `    {\n${campos.join(',\n')}\n    }`;
   }
@@ -238,7 +259,7 @@
   function calcularPlan() {
     const destino = construirDestino();
     const indiceNuevo = construirIndice();
-    const plan = { destino, nuevos: [], modificados: [], borrados: [], iguales: [], indiceCambio: false, indiceNuevo };
+    const plan = { destino, nuevos: [], modificados: [], borrados: [], iguales: [], imagenes: [], indiceCambio: false, indiceNuevo };
     for (const [ruta, texto] of destino) {
       if (!E.base.archivos.has(ruta)) plan.nuevos.push(ruta);
       else if (E.base.archivos.get(ruta) !== texto) plan.modificados.push(ruta);
@@ -246,10 +267,14 @@
     }
     for (const ruta of E.base.archivos.keys()) if (!destino.has(ruta)) plan.borrados.push(ruta);
     plan.indiceCambio = JSON.stringify(indiceNuevo.materias) !== E.base.indice;
+    // Imágenes nuevas que alguna pregunta usa de verdad (las que se descartaron no se escriben)
+    const usadas = new Set();
+    E.materias.forEach((m) => m.temas.forEach((t) => t.preguntas.forEach((q) => { const n = nombreImagen(q.imagen); if (n) usadas.add(n); })));
+    plan.imagenes = [...E.imgNuevas].filter((n) => usadas.has(n) && E.imgs.has(n));
     return plan;
   }
 
-  const cantidadCambios = (p) => p.nuevos.length + p.modificados.length + p.borrados.length;
+  const cantidadCambios = (p) => p.nuevos.length + p.modificados.length + p.borrados.length + (p.imagenes?.length || 0);
 
   function releerOrdenesDeArchivos(archivos) {
     E.materias.forEach((m) => {
@@ -298,7 +323,7 @@
     const hora = (d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1);
     const fecha = ((d.getFullYear() - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate();
     for (const a of archivos) {
-      const nombre = enc.encode(a.nombre), datos = enc.encode(a.texto), crc = crc32(datos);
+      const nombre = enc.encode(a.nombre), datos = a.bytes || enc.encode(a.texto), crc = crc32(datos);
       const loc = new DataView(new ArrayBuffer(30));
       loc.setUint32(0, 0x04034b50, true); loc.setUint16(4, 20, true); loc.setUint16(6, 0x0800, true); loc.setUint16(8, 0, true);
       loc.setUint16(10, hora, true); loc.setUint16(12, fecha, true); loc.setUint32(14, crc, true);
@@ -454,6 +479,74 @@
     return mapa;
   }
 
+  // ---------- Imágenes de las preguntas (data/img/) ----------
+  const MAX_LADO = 1200;   // px del lado más largo: alcanza para estudiar y pesa poco
+
+  function reiniciarImagenes(listadoOk = false, existentes = new Set(), blobs = new Map()) {
+    E.imgListadoOk = listadoOk;
+    E.imgExistentes = existentes;
+    E.imgs = blobs;
+    E.imgNuevas = new Set();
+  }
+
+  async function listarImagenes(dataDir) {
+    const nombres = new Set();
+    try {
+      const d = await dataDir.getDirectoryHandle('img');
+      for await (const [n, h] of d.entries()) if (h.kind === 'file') nombres.add(n);
+    } catch { /* todavía no hay carpeta img */ }
+    return nombres;
+  }
+
+  function leerImagenesDesdeInput(files) {
+    const nombres = new Set(), blobs = new Map();
+    for (const f of files) {
+      const p = (f.webkitRelativePath || '').split('/');
+      for (let i = 0; i < p.length; i++) {
+        if (p[i] === 'data' && p[i + 1] === 'img' && p.length === i + 3) { nombres.add(p[i + 2]); blobs.set(p[i + 2], f); break; }
+      }
+    }
+    reiniciarImagenes(true, nombres, blobs);
+  }
+
+  // Reduce la imagen y la pasa a WebP (o JPEG si el navegador no lo soporta).
+  // El nombre sale del contenido: la misma imagen siempre tiene el mismo nombre y no se duplica.
+  async function procesarImagen(archivo) {
+    const bmp = await createImageBitmap(archivo);
+    const escala = Math.min(1, MAX_LADO / Math.max(bmp.width, bmp.height));
+    const w = Math.max(1, Math.round(bmp.width * escala)), h = Math.max(1, Math.round(bmp.height * escala));
+    const canvas = document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    const aBlob = (tipo, calidad) => new Promise((ok) => canvas.toBlob(ok, tipo, calidad));
+    ctx.drawImage(bmp, 0, 0, w, h);
+    let blob = await aBlob('image/webp', 0.85);
+    if (!blob || blob.type !== 'image/webp') {
+      ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h);   // JPEG no tiene transparencia
+      ctx.drawImage(bmp, 0, 0, w, h);
+      blob = await aBlob('image/jpeg', 0.88);
+    }
+    bmp.close?.();
+    if (!blob) throw new Error('El navegador no pudo convertir la imagen.');
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    const ext = blob.type === 'image/webp' ? 'webp' : 'jpg';
+    const nombre = `p-${crc32(bytes).toString(16).padStart(8, '0')}-${bytes.length.toString(36)}.${ext}`;
+    return { blob, nombre };
+  }
+
+  const urlsImagen = new Map();   // nombre -> URL temporal para la vista previa
+  async function urlDeImagen(nombre) {
+    if (urlsImagen.has(nombre)) return urlsImagen.get(nombre);
+    let blob = E.imgs.get(nombre) || null;
+    if (!blob && E.handle) {
+      try { blob = await (await (await E.handle.getDirectoryHandle('img')).getFileHandle(nombre)).getFile(); } catch { blob = null; }
+    }
+    if (!blob) return null;
+    const url = URL.createObjectURL(blob);
+    urlsImagen.set(nombre, url);
+    return url;
+  }
+
   // ---------- Escritura en la carpeta (Chrome / Edge) ----------
   async function dirDe(raiz, partes, crear) {
     let d = raiz;
@@ -461,13 +554,14 @@
     return d;
   }
 
-  async function escribirArchivo(raiz, ruta, texto) {
+  // contenido: texto o Blob (las imágenes)
+  async function escribirArchivo(raiz, ruta, contenido) {
     const partes = ruta.split('/');
     const nombre = partes.pop();
     const dir = await dirDe(raiz, partes, true);
     const fh = await dir.getFileHandle(nombre, { create: true });
     const w = await fh.createWritable();
-    await w.write(texto);
+    await w.write(contenido);
     await w.close();
   }
 
@@ -578,12 +672,14 @@
       E.materias = d.materias;
       E.base = { archivos: new Map(d.base.archivos), crudos: new Map(d.base.crudos), secuencia: d.base.secuencia, indice: d.base.indice };
       E.handle = null;
+      reiniciarImagenes(false);
       releerOrdenesDeArchivos(E.base.archivos);
       ajustarContador();
       E.sel = { materia: E.materias[0]?.uid ?? null, tema: null };
       b.hidden = true;
       pintarTodo();
-      avisar('Borrador restaurado');
+      const conImagenes = E.materias.some((m) => m.temas.some((t) => t.preguntas.some((q) => nombreImagen(q.imagen))));
+      avisar(conImagenes ? 'Borrador restaurado. Si habías cargado imágenes nuevas sin guardar, volvé a elegirlas.' : 'Borrador restaurado');
     };
     $('#bn-desc').onclick = () => { try { localStorage.removeItem(CLAVE_BORRADOR); } catch { /* nada */ } b.hidden = true; };
   }
@@ -771,6 +867,16 @@
           <input type="text" data-campo="q-op${k}" value="${esc(o)}" aria-label="Opción ${LETRAS[k]}"></div>`).join('')}
         <p class="pista">El juego mezcla el orden de las opciones, así que no importa dónde pongas la correcta.</p>
         <label class="campo"><span>Explicación</span><textarea rows="2" data-campo="q-explicacion">${esc(q.explicacion)}</textarea></label>
+        <div class="campo-imagen">
+          <span class="rotulo">Imagen (opcional)</span>
+          ${q.imagen ? `<figure class="img-prev"><img data-img="${esc(q.imagen)}" alt=""><figcaption class="archivo">${esc(q.imagen)}</figcaption></figure>` : ''}
+          <div class="acciones-q">
+            <label class="btn chico" style="cursor:pointer">${q.imagen ? 'Cambiar imagen' : 'Elegir imagen'}<input type="file" accept="image/*" data-campo="q-imagen-archivo" hidden></label>
+            ${q.imagen ? '<button class="btn chico peligro" data-accion="q-img-quitar">Quitar imagen</button>' : ''}
+          </div>
+          ${q.imagen ? `<label class="campo"><span>Descripción de la imagen (para accesibilidad)</span><input type="text" data-campo="q-imagen-alt" value="${esc(q.imagenAlt)}"></label>` : ''}
+          <p class="pista">Se reduce a ${MAX_LADO} px y se guarda en data/img/ cuando guardás los cambios.</p>
+        </div>
         <ul class="problemas" data-problemas>${htmlProblemas(r)}</ul>
         <div class="acciones-q">
           <button class="btn chico" data-accion="q-sube">↑ Subir</button>
@@ -840,14 +946,59 @@
         if (campo === 'q-pregunta') q.pregunta = el.value;
         else if (campo === 'q-explicacion') q.explicacion = el.value;
         else if (campo === 'q-correcta') q.correcta = el.value;
+        else if (campo === 'q-imagen-alt') q.imagenAlt = el.value;
         else if (/^q-op[0-3]$/.test(campo)) q.opciones[Number(campo.slice(4))] = el.value;
       }
     }
     refrescarLento();
   }
 
+  function repintarPregunta(q) {
+    const t = temaActual();
+    const card = $(`[data-q="${q.uid}"]`);
+    if (card && t) card.outerHTML = htmlPregunta(q, t.preguntas.indexOf(q));
+  }
+
+  async function elegirImagen(input) {
+    const archivo = input.files[0];
+    const q = preguntaDe(input);
+    input.value = '';
+    if (!archivo || !q) return;
+    try {
+      const { blob, nombre } = await procesarImagen(archivo);
+      E.imgs.set(nombre, blob);
+      if (!E.imgExistentes.has(nombre)) E.imgNuevas.add(nombre);
+      q.imagen = `data/img/${nombre}`;
+      repintarPregunta(q);
+      refrescar();
+      avisar(`Imagen lista (${Math.max(1, Math.round(blob.size / 1024))} KB)`);
+    } catch (err) {
+      console.error(err);
+      avisar('No se pudo leer esa imagen. Probá con un PNG, JPG o WebP.');
+    }
+  }
+
+  // Las vistas previas se completan solas cuando aparece una <img data-img> en pantalla
+  function hidratarImagenes() {
+    $$('#principal img[data-img]:not([data-listo])').forEach(async (img) => {
+      img.dataset.listo = '1';
+      const ruta = img.dataset.img;
+      const n = nombreImagen(ruta);
+      const url = n ? await urlDeImagen(n) : (/^https:\/\/\S+$/i.test(ruta) ? ruta : null);
+      if (url) img.src = url;
+      else {
+        const p = document.createElement('p');
+        p.className = 'pista';
+        p.textContent = 'No se puede mostrar la vista previa (la imagen no está cargada en esta sesión).';
+        img.replaceWith(p);
+      }
+    });
+  }
+  new MutationObserver(hidratarImagenes).observe($('#principal'), { childList: true, subtree: true });
+
   function onChange(e) {
     const el = e.target;
+    if (el.dataset.campo === 'q-imagen-archivo') { elegirImagen(el); return; }
     if (el.dataset.campo === 'm-carpeta') {
       const m = matActual();
       let nueva = slug(el.value), n = 2;
@@ -902,7 +1053,9 @@
       const h = await window.showDirectoryPicker({ mode: 'readwrite' });
       const dataDir = await resolverDataDir(h);
       const mapa = await leerDesdeHandle(dataDir);
+      const imagenes = await listarImagenes(dataDir);
       E.handle = dataDir;
+      reiniciarImagenes(true, imagenes);
       cargarArchivos(mapa);
       despuesDeCargar(mapa);
     } catch (e) {
@@ -931,6 +1084,7 @@
       if (!nombre?.trim()) return;
       E.materias = [];
       E.handle = null;
+      reiniciarImagenes(false);
       fijarBase(new Map(), new Map());
       const m = crearMateria(nombre.trim());
       E.sel = { materia: m.uid, tema: null };
@@ -1044,6 +1198,13 @@
       const t = temaActual();
       const card = el.closest('[data-q]');
       card.outerHTML = htmlPregunta(q, t.preguntas.indexOf(q));
+      refrescar();
+    },
+    'q-img-quitar': (el) => {
+      const q = preguntaDe(el);
+      q.imagen = '';
+      q.imagenAlt = '';
+      repintarPregunta(q);
       refrescar();
     },
     'q-borrar': (el) => {
@@ -1299,7 +1460,7 @@
   const textoIndice = (indice) =>
     JSON.stringify({ generado: new Date().toISOString().replace(/\.\d+Z$/, 'Z'), ...indice }, null, 2) + '\n';
 
-  function archivosParaZip(plan, soloCambios) {
+  async function archivosParaZip(plan, soloCambios) {
     const archivos = [];
     const cambiado = (r) => plan.nuevos.includes(r) || plan.modificados.includes(r);
     for (const [r, texto] of plan.destino) {
@@ -1309,6 +1470,9 @@
     }
     if (!soloCambios || plan.indiceCambio || cantidadCambios(plan) > 0) {
       archivos.push({ nombre: 'data/index.json', texto: textoIndice(plan.indiceNuevo) });
+    }
+    for (const n of plan.imagenes) {
+      archivos.push({ nombre: `data/img/${n}`, bytes: new Uint8Array(await E.imgs.get(n).arrayBuffer()) });
     }
     if (plan.borrados.length) {
       archivos.push({
@@ -1340,8 +1504,8 @@
         <button class="btn chico" id="g-ver">Verlos</button>
         <label class="check"><input type="checkbox" id="g-igual"> Guardar igual de todos modos</label></div>` : ''}
       ${!errores && avisos ? `<div class="nota">Hay ${plural(avisos, 'aviso', 'avisos')} (recomendaciones, no frenan nada). <button class="btn chico" id="g-ver">Verlos</button></div>` : ''}
-      ${lista('Archivos nuevos', plan.nuevos)}${lista('Archivos modificados', plan.modificados)}${lista('Archivos que hay que borrar', plan.borrados)}
-      <div class="nota"><b>Cómo usarlo:</b> ${TIENE_API_CARPETAS ? '“Escribir en la carpeta” guarda directo en tu repo. ' : ''}Con el ZIP, descomprimilo y copiá la carpeta <b>data</b> dentro del repo, pisando la existente. Después hacé <code>git add . &amp;&amp; git commit &amp;&amp; git push</code>.</div>
+      ${lista('Archivos nuevos', plan.nuevos)}${lista('Archivos modificados', plan.modificados)}${lista('Imágenes nuevas', plan.imagenes.map((n) => `img/${n}`))}${lista('Archivos que hay que borrar', plan.borrados)}
+      <div class="nota"><b>Cómo usarlo:</b> ${TIENE_API_CARPETAS ? '“Escribir en la carpeta” guarda directo en tu repo. ' : ''}Con el ZIP, descomprimilo y copiá la carpeta <b>data</b> dentro del repo, pisando la existente.${plan.imagenes.length ? ' Las imágenes van en <b>data/img</b>: combiná las carpetas y no borres las imágenes que ya estaban.' : ''} Después hacé <code>git add . &amp;&amp; git commit &amp;&amp; git push</code>.</div>
       <div id="g-estado"></div>`,
       `${TIENE_API_CARPETAS ? `<button class="btn primario" id="g-escribir">${E.handle ? 'Escribir en la carpeta abierta' : 'Elegir carpeta y escribir'}</button>` : ''}
        <button class="btn ${TIENE_API_CARPETAS ? '' : 'primario'}" id="g-zip">Descargar ZIP de data/</button>
@@ -1367,12 +1531,17 @@
         if (!E.handle) await elegirCarpetaEscritura();
         if (!(await asegurarPermiso(E.handle))) { avisar('Sin permiso para escribir en la carpeta.'); return; }
         const p = calcularPlan();
+        for (const n of p.imagenes) {   // primero las imágenes: así ningún JSON apunta a un archivo que todavía no está
+          await escribirArchivo(E.handle, `img/${n}`, E.imgs.get(n));
+          E.imgExistentes.add(n);
+          E.imgNuevas.delete(n);
+        }
         for (const r of [...p.nuevos, ...p.modificados]) await escribirArchivo(E.handle, r, p.destino.get(r));
         for (const r of p.borrados) await borrarArchivo(E.handle, r);
         if (p.indiceCambio || cantidadCambios(p) > 0 || !E.base.archivos.size) await escribirArchivo(E.handle, 'index.json', textoIndice(p.indiceNuevo));
         fijarBase(p.destino, p.destino);
         refrescar();
-        $('#g-estado', d).innerHTML = `<div class="nota"><b>Listo.</b> Se escribieron ${plural(p.nuevos.length + p.modificados.length, 'archivo', 'archivos')} y se borraron ${p.borrados.length} en la carpeta “${esc(E.handle.name)}”.
+        $('#g-estado', d).innerHTML = `<div class="nota"><b>Listo.</b> Se escribieron ${plural(p.nuevos.length + p.modificados.length, 'archivo', 'archivos')}${p.imagenes.length ? ` (más ${plural(p.imagenes.length, 'imagen', 'imágenes')})` : ''} y se borraron ${p.borrados.length} en la carpeta “${esc(E.handle.name)}”.
           Ahora podés hacer <code>git add . &amp;&amp; git commit &amp;&amp; git push</code>.</div>`;
         botones.forEach((b) => { b.disabled = true; });
         avisar('Cambios guardados en la carpeta');
@@ -1384,13 +1553,14 @@
     };
   }
 
-  function descargarZip(plan, soloCambios, d) {
-    const archivos = archivosParaZip(plan, soloCambios);
+  async function descargarZip(plan, soloCambios, d) {
+    const archivos = await archivosParaZip(plan, soloCambios);
     descargar(`repaso-data-${marcaTiempo()}${soloCambios ? '-cambios' : ''}.zip`, crearZip(archivos));
     $('#g-estado', d).innerHTML = `<div class="nota"><b>ZIP descargado</b> (${plural(archivos.length, 'archivo', 'archivos')}).
       Copiá la carpeta <b>data</b> al repo${plan.borrados.length ? ' y borrá lo que indica ARCHIVOS_PARA_BORRAR.txt' : ''}.
       <br><button class="btn chico" id="g-marcar" style="margin-top:.5rem">Ya lo copié al repo: marcar como guardado</button></div>`;
     $('#g-marcar', d).onclick = () => {
+      plan.imagenes.forEach((n) => { E.imgExistentes.add(n); E.imgNuevas.delete(n); });
       fijarBase(plan.destino, plan.destino);
       refrescar();
       cerrarModal();
@@ -1411,6 +1581,7 @@
     const mapa = await leerDesdeInput(files);
     if (![...mapa.keys()].some((k) => k.includes('/'))) { avisar('No encontré una carpeta data/ con archivos .json en lo que elegiste.'); return; }
     E.handle = null;
+    leerImagenesDesdeInput(files);
     cargarArchivos(mapa);
     despuesDeCargar(mapa);
   });
