@@ -5,7 +5,7 @@
 // Lee la carpeta data/ del repo, te deja editar y después:
 //   - escribe los cambios directo en la carpeta (Chrome / Edge), o
 //   - descarga un ZIP con la carpeta data/ lista para pisar la del repo.
-// Las imágenes de las preguntas se reducen en el navegador y se guardan en data/img/.
+// Las imágenes de las preguntas se recortan y se reducen en el navegador, y se guardan en data/img/.
 // ==========================================================
 'use strict';
 
@@ -509,29 +509,233 @@
     reiniciarImagenes(true, nombres, blobs);
   }
 
-  // Reduce la imagen y la pasa a WebP (o JPEG si el navegador no lo soporta).
+  // Pasa el lienzo ya recortado a WebP (o JPEG si el navegador no lo soporta).
   // El nombre sale del contenido: la misma imagen siempre tiene el mismo nombre y no se duplica.
-  async function procesarImagen(archivo) {
-    const bmp = await createImageBitmap(archivo);
-    const escala = Math.min(1, MAX_LADO / Math.max(bmp.width, bmp.height));
-    const w = Math.max(1, Math.round(bmp.width * escala)), h = Math.max(1, Math.round(bmp.height * escala));
-    const canvas = document.createElement('canvas');
-    canvas.width = w; canvas.height = h;
-    const ctx = canvas.getContext('2d');
-    const aBlob = (tipo, calidad) => new Promise((ok) => canvas.toBlob(ok, tipo, calidad));
-    ctx.drawImage(bmp, 0, 0, w, h);
-    let blob = await aBlob('image/webp', 0.85);
+  async function codificarImagen(lienzo) {
+    let blob = await new Promise((ok) => lienzo.toBlob(ok, 'image/webp', 0.85));
     if (!blob || blob.type !== 'image/webp') {
-      ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h);   // JPEG no tiene transparencia
-      ctx.drawImage(bmp, 0, 0, w, h);
-      blob = await aBlob('image/jpeg', 0.88);
+      const c = document.createElement('canvas');
+      c.width = lienzo.width; c.height = lienzo.height;
+      const x = c.getContext('2d');
+      x.fillStyle = '#fff'; x.fillRect(0, 0, c.width, c.height);   // JPEG no tiene transparencia
+      x.drawImage(lienzo, 0, 0);
+      blob = await new Promise((ok) => c.toBlob(ok, 'image/jpeg', 0.88));
     }
-    bmp.close?.();
     if (!blob) throw new Error('El navegador no pudo convertir la imagen.');
     const bytes = new Uint8Array(await blob.arrayBuffer());
     const ext = blob.type === 'image/webp' ? 'webp' : 'jpg';
     const nombre = `p-${crc32(bytes).toString(16).padStart(8, '0')}-${bytes.length.toString(36)}.${ext}`;
     return { blob, nombre };
+  }
+
+  // ---------- Recorte de la imagen antes de usarla ----------
+  const LIMITE_BASE = 4096;   // las fotos enormes se achican un poco antes de editarlas (cuidan la memoria)
+
+  // Abre el recortador. Devuelve un <canvas> con el resultado final (ya a tamaño de salida) o null si se cancela.
+  async function abrirRecorte(archivo) {
+    const bmp = await createImageBitmap(archivo);
+    let base = document.createElement('canvas');
+    const e0 = Math.min(1, LIMITE_BASE / Math.max(bmp.width, bmp.height));
+    base.width = Math.max(1, Math.round(bmp.width * e0));
+    base.height = Math.max(1, Math.round(bmp.height * e0));
+    base.getContext('2d').drawImage(bmp, 0, 0, base.width, base.height);
+    bmp.close?.();
+
+    return new Promise((resolver) => {
+      const RATIOS = [['libre', 'Libre', null], ['toda', 'Toda', null], ['16:9', '16:9', 16 / 9], ['4:3', '4:3', 4 / 3], ['1:1', '1:1', 1]];
+      const d = abrirModal('Recortar imagen', `
+        <div class="rec-barra">
+          <span class="rotulo">Proporción</span>
+          ${RATIOS.map(([c, txt]) => `<button class="btn chico ${c === 'libre' ? 'activo' : ''}" data-r="${c}" type="button">${txt}</button>`).join('')}
+          <span class="rec-sep"></span>
+          <button class="btn chico" id="rec-izq" type="button" aria-label="Girar a la izquierda">↶ Girar</button>
+          <button class="btn chico" id="rec-der" type="button" aria-label="Girar a la derecha">Girar ↷</button>
+        </div>
+        <div class="rec-escena"><canvas id="rec-canvas" aria-label="Imagen a recortar"></canvas></div>
+        <p class="pista">Arrastrá el recuadro para moverlo, y las esquinas o los bordes para cambiarle el tamaño. Si arrastrás fuera del recuadro, dibujás uno nuevo.</p>
+        <span class="rotulo">Así va a quedar</span>
+        <div class="rec-prev"><canvas id="rec-prev"></canvas></div>
+        <p class="pista" id="rec-info"></p>`,
+        '<button class="btn" id="rec-cancelar" type="button">Cancelar</button><button class="btn primario" id="rec-ok" type="button">Usar esta imagen</button>');
+
+      const canvas = $('#rec-canvas', d), ctx = canvas.getContext('2d');
+      const prev = $('#rec-prev', d), info = $('#rec-info', d);
+      const MIN = 24, ASA = 14;
+      const CURSOR = { n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize', nw: 'nwse-resize', se: 'nwse-resize', ne: 'nesw-resize', sw: 'nesw-resize' };
+      const dpr = window.devicePixelRatio || 1;
+      const limitar = (v, a, b) => Math.min(Math.max(v, a), b);
+      let dw = 0, dh = 0;            // tamaño del lienzo en pantalla
+      let rect = null;               // recuadro de recorte, en coordenadas de pantalla
+      let ratio = null;              // proporción fija (ancho/alto) o null si es libre
+      let arrastre = null;
+      let aceptado = false;
+
+      function ajustarVista() {
+        const disp = Math.max(240, $('.rec-escena', d).clientWidth - 24);
+        const k = Math.min(disp / base.width, (window.innerHeight * 0.42) / base.height, 1);
+        dw = Math.max(1, Math.round(base.width * k));
+        dh = Math.max(1, Math.round(base.height * k));
+        canvas.width = Math.round(dw * dpr); canvas.height = Math.round(dh * dpr);
+        canvas.style.width = `${dw}px`; canvas.style.height = `${dh}px`;
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      }
+
+      const rectCompleto = () => ({ x: 0, y: 0, w: dw, h: dh });
+      function rectRatio(r) {   // el recuadro más grande de esa proporción, centrado
+        let w, h;
+        if (dw / dh > r) { h = dh; w = dh * r; } else { w = dw; h = dw / r; }
+        return { x: (dw - w) / 2, y: (dh - h) / 2, w, h };
+      }
+
+      function asas() {   // con proporción fija solo se usan las esquinas
+        const { x, y, w, h } = rect;
+        const lista = [['nw', x, y], ['ne', x + w, y], ['sw', x, y + h], ['se', x + w, y + h]];
+        if (!ratio) lista.push(['n', x + w / 2, y], ['s', x + w / 2, y + h], ['w', x, y + h / 2], ['e', x + w, y + h / 2]);
+        return lista;
+      }
+      const posicion = (e) => {
+        const b = canvas.getBoundingClientRect();
+        return { x: limitar((e.clientX - b.left) * dw / b.width, 0, dw), y: limitar((e.clientY - b.top) * dh / b.height, 0, dh) };
+      };
+      const asaEn = (p) => (asas().find(([, ax, ay]) => Math.abs(p.x - ax) <= ASA && Math.abs(p.y - ay) <= ASA) || [])[0] || null;
+      const dentro = (p) => p.x >= rect.x && p.x <= rect.x + rect.w && p.y >= rect.y && p.y <= rect.y + rect.h;
+
+      // Recuadro que crece desde un punto fijo (ax, ay) hacia la dirección (sx, sy)
+      function desdeAncla(ax, ay, sx, sy, dx, dy) {
+        const maxW = sx > 0 ? dw - ax : ax, maxH = sy > 0 ? dh - ay : ay;
+        let w = dx, h = dy;
+        if (ratio) {
+          if (w / h > ratio) w = h * ratio; else h = w / ratio;
+          const f = Math.min(1, maxW / w, maxH / h);
+          w *= f; h *= f;
+        } else { w = Math.min(w, maxW); h = Math.min(h, maxH); }
+        return { x: sx > 0 ? ax : ax - w, y: sy > 0 ? ay : ay - h, w, h };
+      }
+
+      function dibujar() {
+        ctx.clearRect(0, 0, dw, dh);
+        ctx.drawImage(base, 0, 0, dw, dh);
+        ctx.fillStyle = 'rgba(10, 5, 25, .62)';   // oscurece lo que queda afuera
+        ctx.beginPath(); ctx.rect(0, 0, dw, dh); ctx.rect(rect.x, rect.y, rect.w, rect.h); ctx.fill('evenodd');
+        ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(255, 243, 220, .35)';   // regla de tercios
+        ctx.beginPath();
+        for (let i = 1; i < 3; i++) {
+          ctx.moveTo(rect.x + rect.w * i / 3, rect.y); ctx.lineTo(rect.x + rect.w * i / 3, rect.y + rect.h);
+          ctx.moveTo(rect.x, rect.y + rect.h * i / 3); ctx.lineTo(rect.x + rect.w, rect.y + rect.h * i / 3);
+        }
+        ctx.stroke();
+        ctx.lineWidth = 2; ctx.strokeStyle = '#FFF3DC';
+        ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
+        for (const [, ax, ay] of asas()) { ctx.fillStyle = '#9B7BFF'; ctx.fillRect(ax - 6, ay - 6, 12, 12); ctx.strokeRect(ax - 6, ay - 6, 12, 12); }
+      }
+
+      // Lo que realmente se va a guardar: el recorte, a lo sumo MAX_LADO px del lado más largo
+      function lienzoSalida() {
+        const kx = base.width / dw, ky = base.height / dh;
+        const sx = rect.x * kx, sy = rect.y * ky, sw = rect.w * kx, sh = rect.h * ky;
+        const esc = Math.min(1, MAX_LADO / Math.max(sw, sh));
+        const c = document.createElement('canvas');
+        c.width = Math.max(1, Math.round(sw * esc)); c.height = Math.max(1, Math.round(sh * esc));
+        c.getContext('2d').drawImage(base, sx, sy, sw, sh, 0, 0, c.width, c.height);
+        return c;
+      }
+
+      let temporizadorTam = null;
+      function refrescarRecorte() {
+        dibujar();
+        const c = lienzoSalida();
+        const k = Math.min(1, 520 / c.width, 150 / c.height);
+        prev.width = Math.max(1, Math.round(c.width * k)); prev.height = Math.max(1, Math.round(c.height * k));
+        prev.getContext('2d').drawImage(c, 0, 0, prev.width, prev.height);
+        const nota = c.height / c.width > 1.2
+          ? ' En el juego se ve entera, pero las imágenes muy altas se achican para entrar en pantalla.'
+          : ' En el juego se ve entera, sin recortes extra.';
+        info.textContent = `Tamaño final: ${c.width} × ${c.height} px.${nota}`;
+        clearTimeout(temporizadorTam);
+        temporizadorTam = setTimeout(() => c.toBlob((b) => {
+          if (b && d.open) info.textContent = `Tamaño final: ${c.width} × ${c.height} px (unos ${Math.max(1, Math.round(b.size / 1024))} KB).${nota}`;
+        }, 'image/webp', 0.85), 300);
+      }
+      let cuadroPedido = false;
+      const pedirRefresco = () => {
+        if (cuadroPedido) return;
+        cuadroPedido = true;
+        requestAnimationFrame(() => { cuadroPedido = false; if (d.open) refrescarRecorte(); });
+      };
+
+      canvas.addEventListener('pointerdown', (e) => {
+        const p = posicion(e);
+        const a = asaEn(p);
+        canvas.setPointerCapture(e.pointerId);
+        if (a) arrastre = { modo: 'asa', a, r0: { ...rect } };
+        else if (dentro(p)) arrastre = { modo: 'mover', dx: p.x - rect.x, dy: p.y - rect.y };
+        else arrastre = { modo: 'nuevo', ax: p.x, ay: p.y, activo: false };
+        e.preventDefault();
+      });
+      canvas.addEventListener('pointermove', (e) => {
+        const p = posicion(e);
+        if (!arrastre) { const a = asaEn(p); canvas.style.cursor = a ? CURSOR[a] : dentro(p) ? 'move' : 'crosshair'; return; }
+        if (arrastre.modo === 'mover') {
+          rect = { ...rect, x: limitar(p.x - arrastre.dx, 0, dw - rect.w), y: limitar(p.y - arrastre.dy, 0, dh - rect.h) };
+        } else if (arrastre.modo === 'asa') {
+          const { a, r0 } = arrastre;
+          if (a.length === 2) {   // esquina: el punto opuesto queda fijo
+            const sx = a.includes('w') ? -1 : 1, sy = a.includes('n') ? -1 : 1;
+            const ax = sx > 0 ? r0.x : r0.x + r0.w, ay = sy > 0 ? r0.y : r0.y + r0.h;
+            rect = desdeAncla(ax, ay, sx, sy, Math.max(MIN, (p.x - ax) * sx), Math.max(MIN, (p.y - ay) * sy));
+          } else {                // borde (solo en modo libre)
+            let x1 = r0.x, y1 = r0.y, x2 = r0.x + r0.w, y2 = r0.y + r0.h;
+            if (a === 'w') x1 = Math.min(p.x, x2 - MIN);
+            if (a === 'e') x2 = Math.max(p.x, x1 + MIN);
+            if (a === 'n') y1 = Math.min(p.y, y2 - MIN);
+            if (a === 's') y2 = Math.max(p.y, y1 + MIN);
+            rect = { x: x1, y: y1, w: x2 - x1, h: y2 - y1 };
+          }
+        } else {                  // recuadro nuevo (solo si realmente se arrastró)
+          if (!arrastre.activo && Math.hypot(p.x - arrastre.ax, p.y - arrastre.ay) < 6) return;
+          arrastre.activo = true;
+          const sx = p.x >= arrastre.ax ? 1 : -1, sy = p.y >= arrastre.ay ? 1 : -1;
+          rect = desdeAncla(arrastre.ax, arrastre.ay, sx, sy, Math.max(MIN, Math.abs(p.x - arrastre.ax)), Math.max(MIN, Math.abs(p.y - arrastre.ay)));
+        }
+        pedirRefresco();
+      });
+      const soltar = () => { arrastre = null; };
+      canvas.addEventListener('pointerup', soltar);
+      canvas.addEventListener('pointercancel', soltar);
+      canvas.addEventListener('click', (e) => e.stopPropagation());
+
+      $$('[data-r]', d).forEach((b) => b.addEventListener('click', () => {
+        const [clave, , r] = RATIOS.find(([c]) => c === b.dataset.r);
+        $$('[data-r]', d).forEach((x) => x.classList.toggle('activo', x === b));
+        if (clave === 'libre') ratio = null;
+        else if (clave === 'toda') { ratio = null; rect = rectCompleto(); }
+        else { ratio = r; rect = rectRatio(r); }
+        refrescarRecorte();
+      }));
+
+      function girar(sentido) {
+        const n = document.createElement('canvas');
+        n.width = base.height; n.height = base.width;
+        const x = n.getContext('2d');
+        x.translate(n.width / 2, n.height / 2);
+        x.rotate(sentido * Math.PI / 2);
+        x.drawImage(base, -base.width / 2, -base.height / 2);
+        base = n;
+        ajustarVista();
+        rect = ratio ? rectRatio(ratio) : rectCompleto();
+        refrescarRecorte();
+      }
+      $('#rec-izq', d).onclick = () => girar(-1);
+      $('#rec-der', d).onclick = () => girar(1);
+
+      $('#rec-cancelar', d).onclick = cerrarModal;
+      $('#rec-ok', d).onclick = () => { aceptado = true; const c = lienzoSalida(); cerrarModal(); resolver(c); };
+      d.addEventListener('close', () => { if (!aceptado) resolver(null); }, { once: true });
+
+      ajustarVista();
+      rect = rectCompleto();
+      refrescarRecorte();
+    });
   }
 
   const urlsImagen = new Map();   // nombre -> URL temporal para la vista previa
@@ -965,7 +1169,9 @@
     input.value = '';
     if (!archivo || !q) return;
     try {
-      const { blob, nombre } = await procesarImagen(archivo);
+      const recortada = await abrirRecorte(archivo);
+      if (!recortada) return;   // canceló el recorte
+      const { blob, nombre } = await codificarImagen(recortada);
       E.imgs.set(nombre, blob);
       if (!E.imgExistentes.has(nombre)) E.imgNuevas.add(nombre);
       q.imagen = `data/img/${nombre}`;
