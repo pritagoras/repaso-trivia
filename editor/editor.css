@@ -280,3 +280,16 @@ mark { background: rgba(255, 185, 56, .35); color: var(--crema); border-radius: 
 .rec-escena canvas { display: block; max-width: 100%; touch-action: none; user-select: none; border-radius: 4px; }
 .rec-prev { margin-top: .3rem; }
 .rec-prev canvas { display: block; max-width: 100%; border-radius: 6px; }
+
+/* ---------- Tarjetas tipo Anki ---------- */
+.seccion-tarjetas { margin-top: 2.2rem; padding-top: 1.2rem; border-top: 2px solid var(--linea); }
+.cabecera-vista h3 { font-size: 1.25rem; font-weight: 800; flex: 1; min-width: 12rem; }
+.tarj { background: var(--panel); border: 2px solid var(--linea); border-radius: 14px; padding: .6rem .9rem .8rem; margin-bottom: .6rem; }
+.tarj.con-error { border-left: 6px solid var(--mal); }
+.tarj.con-aviso { border-left: 6px solid var(--ambar); }
+.tarj-cab { display: flex; align-items: center; justify-content: space-between; gap: .6rem; margin-bottom: .5rem; }
+.tarj-cab .n { font-family: var(--pixel); color: var(--tenue); font-size: .9rem; }
+.tarj-campos { display: grid; grid-template-columns: 1fr 1fr; gap: .8rem; }
+.tarj-campos .campo { margin-bottom: .4rem; }
+@media (max-width: 700px) { .tarj-campos { grid-template-columns: 1fr; } }
+.m-cuerpo textarea[readonly] { font-size: .88rem; line-height: 1.4; }

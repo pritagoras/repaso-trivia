@@ -5,6 +5,7 @@
 // Lee la carpeta data/ del repo, te deja editar y después:
 //   - escribe los cambios directo en la carpeta (Chrome / Edge), o
 //   - descarga un ZIP con la carpeta data/ lista para pisar la del repo.
+// Cada tema puede tener también tarjetas tipo Anki ("tarjetas": frente y dorso) para el repaso diario.
 // Las imágenes de las preguntas se recortan y se reducen en el navegador, y se guardan en data/img/.
 // ==========================================================
 'use strict';
@@ -74,13 +75,20 @@
   });
 
   const nuevoTema = (o = {}) => ({
-    uid: uid(), nombre: '', parte: '', extra: {}, preguntas: [], ...o,
+    uid: uid(), nombre: '', parte: '', extra: {}, preguntas: [], tarjetas: [], ...o,
   });
 
   const nuevaMateria = (o = {}) => ({
     uid: uid(), carpeta: '', nombre: '', emoji: '📚', color: '', orden: 0, extra: {},
     tieneMeta: false, ordenEnArchivo: undefined, nombreBase: '', temas: [], ...o,
   });
+
+  const nuevaTarjeta = (o = {}) => ({ uid: uid(), frente: '', dorso: '', extra: {}, ...o });
+
+  function tarjetaDesdeJSON(c) {
+    const { frente, dorso, pregunta, respuesta, ...extra } = c;
+    return nuevaTarjeta({ frente: String(frente ?? pregunta ?? ''), dorso: String(dorso ?? respuesta ?? ''), extra });
+  }
 
   function preguntaDesdeJSON(p, avisos, ctx) {
     const { pregunta, opciones, correcta, explicacion, imagen, imagen_alt, ...extra } = p;
@@ -131,6 +139,15 @@
     return { errores, avisos };
   }
 
+  function validarTarjeta(c) {
+    const errores = [], avisos = [];
+    if (!norm(c.frente)) errores.push('Falta el frente.');
+    if (!norm(c.dorso)) errores.push('Falta el dorso.');
+    if (norm(c.frente).length > 280) avisos.push('El frente es largo: una tarjeta rinde más con una sola idea corta.');
+    if (norm(c.dorso).length > 600) avisos.push('El dorso es muy largo; probá partirlo en varias tarjetas.');
+    return { errores, avisos };
+  }
+
   function analizar() {
     const lista = [], conteo = new Map();
     let errores = 0, avisos = 0;
@@ -165,6 +182,18 @@
           r.errores.forEach((x) => reg('e', m, t, q, `Pregunta ${i + 1}: ${x}`));
           r.avisos.forEach((x) => reg('a', m, t, q, `Pregunta ${i + 1}: ${x}`));
         });
+        const frentes = new Map();
+        (t.tarjetas || []).forEach((c, i) => {
+          const r = validarTarjeta(c);
+          const clave = norm(c.frente);
+          if (clave) {
+            if (frentes.has(clave)) r.avisos.push(`Frente repetido (igual a la tarjeta ${frentes.get(clave)}).`);
+            else frentes.set(clave, i + 1);
+          }
+          PROB.set(c, r);
+          r.errores.forEach((x) => reg('e', m, t, c, `Tarjeta ${i + 1}: ${x}`));
+          r.avisos.forEach((x) => reg('a', m, t, c, `Tarjeta ${i + 1}: ${x}`));
+        });
       });
     });
     E.analisis = { lista, conteo, errores, avisos };
@@ -192,10 +221,18 @@
     return `    {\n${campos.join(',\n')}\n    }`;
   }
 
+  function serializarTarjeta(c) {
+    const sangria = '      ';
+    const campos = [`${sangria}"frente": ${J(c.frente)}`, `${sangria}"dorso": ${J(c.dorso)}`];
+    for (const [k, v] of Object.entries(c.extra || {})) campos.push(`${sangria}${J(k)}: ${J(v)}`);
+    return `    {\n${campos.join(',\n')}\n    }`;
+  }
+
   function serializarTema(m, t) {
     const campos = [`  "materia": ${J(m.nombre)}`, `  "tema": ${J(t.nombre)}`];
     for (const [k, v] of Object.entries(t.extra || {})) campos.push(`  ${J(k)}: ${J(v)}`);
     campos.push(`  "preguntas": [\n${t.preguntas.map(serializarPregunta).join(',\n')}\n  ]`);
+    if (t.tarjetas?.length) campos.push(`  "tarjetas": [\n${t.tarjetas.map(serializarTarjeta).join(',\n')}\n  ]`);
     return `{\n${campos.join(',\n')}\n}\n`;
   }
 
@@ -392,14 +429,21 @@
           continue;
         }
         gestionados.push(f.ruta);
-        const { materia, tema, preguntas, ...extra } = datos;
+        const { materia, tema, preguntas, tarjetas, ...extra } = datos;
         const qs = [];
         preguntas.forEach((p, i) => {
           if (!p || typeof p !== 'object') { avisos.push(`${f.ruta}: la pregunta ${i + 1} no es un objeto; se omitió.`); return; }
           qs.push(preguntaDesdeJSON(p, avisos, `${f.ruta}, pregunta ${i + 1}`));
         });
+        const ts = [];
+        if (Array.isArray(tarjetas)) {
+          tarjetas.forEach((c, i) => {
+            if (!c || typeof c !== 'object') { avisos.push(`${f.ruta}: la tarjeta ${i + 1} no es un objeto; se omitió.`); return; }
+            ts.push(tarjetaDesdeJSON(c));
+          });
+        } else if (tarjetas !== undefined) extra.tarjetas = tarjetas;   // formato raro: se conserva tal cual
         const parte = f.archivo.replace(/\.json$/i, '').replace(/^\d+[-_ ]*/, '');
-        temas.push(nuevoTema({ nombre: String(tema ?? ''), parte: slug(parte), extra, preguntas: qs, materiaCampo: String(materia ?? '') }));
+        temas.push(nuevoTema({ nombre: String(tema ?? ''), parte: slug(parte), extra, preguntas: qs, tarjetas: ts, materiaCampo: String(materia ?? '') }));
       }
       if (!temas.length && !g.meta) continue;
       const meta = g.meta && typeof g.meta === 'object' ? g.meta : {};
@@ -860,7 +904,7 @@
   function ajustarContador() {
     let max = _n;
     const ver = (x) => { const k = Number(String(x.uid).slice(1)); if (k > max) max = k; };
-    E.materias.forEach((m) => { ver(m); m.temas.forEach((t) => { ver(t); t.preguntas.forEach(ver); }); });
+    E.materias.forEach((m) => { ver(m); m.temas.forEach((t) => { ver(t); t.preguntas.forEach(ver); (t.tarjetas || []).forEach(ver); }); });
     _n = max;
   }
 
@@ -874,6 +918,7 @@
       <button class="btn chico primario" id="bn-rest">Restaurar</button><button class="btn chico" id="bn-desc">Descartar</button>`;
     $('#bn-rest').onclick = () => {
       E.materias = d.materias;
+      E.materias.forEach((m) => m.temas.forEach((t) => { t.tarjetas ||= []; }));
       E.base = { archivos: new Map(d.base.archivos), crudos: new Map(d.base.crudos), secuencia: d.base.secuencia, indice: d.base.indice };
       E.handle = null;
       reiniciarImagenes(false);
@@ -920,7 +965,7 @@
             <span aria-hidden="true">${esc(m.emoji)}</span><b>${esc(m.nombre || 'Sin nombre')}</b>${punto(m.uid)}<small>${totalPreguntas(m)}</small>
           </button>
           <ul>${m.temas.map((t) => `<li><button class="lat-t ${E.sel.tema === t.uid ? 'activa' : ''}" data-accion="ir-tema" data-id="${t.uid}">
-            <span class="nombre">${esc(t.nombre || 'Sin nombre')}</span>${punto(t.uid)}<small>${t.preguntas.length}</small></button></li>`).join('')}</ul>
+            <span class="nombre">${esc(t.nombre || 'Sin nombre')}</span>${punto(t.uid)}<small>${t.preguntas.length}${(t.tarjetas || []).length ? ` · 🃏${t.tarjetas.length}` : ''}</small></button></li>`).join('')}</ul>
         </section>`).join('')}`;
   }
 
@@ -929,7 +974,7 @@
     const cont = $('#principal');
     const m = matActual(), t = temaActual();
     if (!E.materias.length) cont.innerHTML = htmlBienvenida();
-    else if (m && t) { cont.innerHTML = htmlTema(m, t); renderPreguntas(); }
+    else if (m && t) { cont.innerHTML = htmlTema(m, t); renderPreguntas(); renderTarjetas(); }
     else if (m) cont.innerHTML = htmlMateria(m);
     else cont.innerHTML = '<div class="vacia">Elegí una materia en el panel de la izquierda.</div>';
   }
@@ -1034,6 +1079,7 @@
         </div>
         <p class="estadisticas">
           <span><b>${t.preguntas.length}</b> preguntas</span>
+          <span><b id="n-tarj-est">${(t.tarjetas || []).length}</b> tarjetas</span>
           <span>Correctas: ${LETRAS.map((L, i) => `${L} <b>${dist[i]}</b>`).join(' · ')}</span>
           <span class="archivo" id="ruta-archivo">data/${esc(m.carpeta)}/${esc(nombreArchivo(t, k))}</span>
         </p>
@@ -1044,7 +1090,54 @@
         <button class="btn chico" data-accion="cerrar-todas">Plegar todas</button>
         <button class="btn chico primario" data-accion="q-nueva">+ Pregunta</button>
       </div>
-      <div id="lista-q"></div>`;
+      <div id="lista-q"></div>
+      <section class="seccion-tarjetas">
+        <div class="cabecera-vista">
+          <h3>🃏 Tarjetas tipo Anki</h3>
+          <button class="btn chico" data-accion="c-prompt">Prompt para el LM</button>
+          <button class="btn chico" data-accion="importar">Pegar JSON del LM</button>
+          <button class="btn chico primario" data-accion="c-nueva">+ Tarjeta</button>
+        </div>
+        <p class="pista">Cada tarjeta tiene un frente (la pregunta o el concepto) y un dorso (la respuesta). En el juego se dan vuelta y vos marcás qué tan bien la sabías: con eso se arma el “Repaso de hoy”.</p>
+        <div id="lista-c"></div>
+      </section>`;
+  }
+
+  function htmlTarjeta(c, i) {
+    const r = PROB.get(c) || validarTarjeta(c);
+    const clase = `tarj${r.errores.length ? ' con-error' : r.avisos.length ? ' con-aviso' : ''}`;
+    return `<article class="${clase}" data-c="${c.uid}">
+      <div class="tarj-cab">
+        <span class="n">${i + 1}</span>
+        <div class="acciones-q">
+          <button class="btn chico" data-accion="c-sube" aria-label="Subir tarjeta">↑</button>
+          <button class="btn chico" data-accion="c-baja" aria-label="Bajar tarjeta">↓</button>
+          <button class="btn chico" data-accion="c-dup">Duplicar</button>
+          <button class="btn chico peligro" data-accion="c-borrar">Eliminar</button>
+        </div>
+      </div>
+      <div class="tarj-campos">
+        <label class="campo"><span>Frente</span><textarea rows="3" data-campo="c-frente">${esc(c.frente)}</textarea></label>
+        <label class="campo"><span>Dorso</span><textarea rows="3" data-campo="c-dorso">${esc(c.dorso)}</textarea></label>
+      </div>
+      <ul class="problemas" data-problemas>${htmlProblemas(r)}</ul>
+    </article>`;
+  }
+
+  function renderTarjetas() {
+    const t = temaActual();
+    const cont = $('#lista-c');
+    if (!t || !cont) return;
+    const lista = t.tarjetas || [];
+    cont.innerHTML = lista.length
+      ? lista.map((c, i) => htmlTarjeta(c, i)).join('')
+      : '<div class="vacia">Este tema todavía no tiene tarjetas. Usá “+ Tarjeta”, o pedile al LM que las arme con “Prompt para el LM” y pegalas con “Pegar JSON del LM”.</div>';
+  }
+
+  function tarjetaDe(el) {
+    const card = el.closest('[data-c]');
+    const t = temaActual();
+    return card && t ? (t.tarjetas || []).find((c) => c.uid === card.dataset.c) : null;
   }
 
   const htmlProblemas = (r) =>
@@ -1121,6 +1214,17 @@
       if (ul) ul.innerHTML = htmlProblemas(r);
       card.querySelectorAll('.opcion-edit').forEach((fila, k) => fila.classList.toggle('correcta', q.correcta === LETRAS[k]));
     });
+    $$('#lista-c .tarj').forEach((card) => {
+      const c = (t.tarjetas || []).find((x) => x.uid === card.dataset.c);
+      const r = c && PROB.get(c);
+      if (!r) return;
+      card.classList.toggle('con-error', r.errores.length > 0);
+      card.classList.toggle('con-aviso', !r.errores.length && r.avisos.length > 0);
+      const ul = card.querySelector('[data-problemas]');
+      if (ul) ul.innerHTML = htmlProblemas(r);
+    });
+    const nt = $('#n-tarj-est');
+    if (nt) nt.textContent = (t.tarjetas || []).length;
     const m = matActual();
     const ruta = $('#ruta-archivo');
     if (ruta && m) ruta.textContent = `data/${m.carpeta}/${nombreArchivo(t, m.temas.indexOf(t))}`;
@@ -1144,6 +1248,13 @@
       case 'm-emoji': m.emoji = el.value.trim() || '📚'; $('#titulo-materia').textContent = `${m.emoji} ${m.nombre || 'Sin nombre'}`; break;
       case 'm-color': m.color = el.value.toUpperCase(); break;
       case 't-nombre': t.nombre = el.value; $('#titulo-tema').textContent = t.nombre || 'Tema sin nombre'; break;
+      case 'c-frente':
+      case 'c-dorso': {
+        const c = tarjetaDe(el);
+        if (!c) return;
+        if (campo === 'c-frente') c.frente = el.value; else c.dorso = el.value;
+        break;
+      }
       default: {
         const q = preguntaDe(el);
         if (!q) return;
@@ -1242,7 +1353,7 @@
     renderPrincipal();
     renderLateral();
     if (qid) {
-      const card = $(`[data-q="${qid}"]`);
+      const card = $(`[data-q="${qid}"]`) || $(`[data-c="${qid}"]`);
       if (card) card.scrollIntoView({ block: 'center' });
     } else window.scrollTo({ top: 0 });
   }
@@ -1347,6 +1458,7 @@
       copia.nombre = `${t.nombre} (copia)`;
       copia.parte = `${t.parte}-copia`;
       copia.preguntas.forEach((q) => { q.uid = uid(); });
+      (copia.tarjetas || []).forEach((c) => { c.uid = uid(); });
       m.temas.splice(m.temas.indexOf(t) + 1, 0, copia);
       normalizarPartes(m);
       seleccionar(m.uid, copia.uid);
@@ -1406,6 +1518,36 @@
       card.outerHTML = htmlPregunta(q, t.preguntas.indexOf(q));
       refrescar();
     },
+    'c-nueva': () => {
+      const t = temaActual();
+      t.tarjetas ||= [];
+      const c = nuevaTarjeta();
+      t.tarjetas.push(c);
+      renderTarjetas();
+      refrescar();
+      const card = $(`[data-c="${c.uid}"]`);
+      card?.scrollIntoView({ block: 'center' });
+      card?.querySelector('textarea')?.focus();
+    },
+    'c-sube': (el) => moverTarjeta(el, -1),
+    'c-baja': (el) => moverTarjeta(el, 1),
+    'c-dup': (el) => {
+      const t = temaActual(), c = tarjetaDe(el);
+      const copia = JSON.parse(JSON.stringify(c));
+      copia.uid = uid();
+      t.tarjetas.splice(t.tarjetas.indexOf(c) + 1, 0, copia);
+      renderTarjetas();
+      refrescar();
+      $(`[data-c="${copia.uid}"]`)?.scrollIntoView({ block: 'center' });
+    },
+    'c-borrar': (el) => {
+      const t = temaActual(), c = tarjetaDe(el);
+      if (!window.confirm('¿Eliminar esta tarjeta?')) return;
+      t.tarjetas.splice(t.tarjetas.indexOf(c), 1);
+      renderTarjetas();
+      refrescar();
+    },
+    'c-prompt': () => abrirPromptTarjetas(),
     'q-img-quitar': (el) => {
       const q = preguntaDe(el);
       q.imagen = '';
@@ -1423,6 +1565,14 @@
       const num = $('.estadisticas b'); if (num) num.textContent = t.preguntas.length;
     },
   };
+
+  function moverTarjeta(el, d) {
+    const t = temaActual(), c = tarjetaDe(el);
+    if (!mover(t.tarjetas, t.tarjetas.indexOf(c), d)) return;
+    renderTarjetas();
+    refrescar();
+    $(`[data-c="${c.uid}"]`)?.scrollIntoView({ block: 'center' });
+  }
 
   function moverPregunta(el, d) {
     const t = temaActual(), q = preguntaDe(el);
@@ -1469,14 +1619,27 @@
     const r = extraerJSON(texto);
     if (r.error) return { error: r.error };
     const datos = r.datos;
-    let materia = '', tema = '', lista;
-    if (Array.isArray(datos)) lista = datos;
-    else if (datos && typeof datos === 'object') {
+    let materia = '', tema = '', lista, listaT;
+    const esTarjeta = (x) => x && typeof x === 'object' && ('frente' in x || 'dorso' in x);
+    if (Array.isArray(datos)) {
+      if (datos.length && datos.every(esTarjeta)) listaT = datos; else lista = datos;
+    } else if (datos && typeof datos === 'object') {
       materia = String(datos.materia ?? '').trim();
       tema = String(datos.tema ?? '').trim();
       lista = alias(datos, 'preguntas', 'questions');
+      listaT = alias(datos, 'tarjetas', 'flashcards', 'cards');
     }
-    if (!Array.isArray(lista)) return { error: 'No encontré la lista "preguntas".' };
+    if (!Array.isArray(lista) && !Array.isArray(listaT)) return { error: 'No encontré la lista "preguntas" ni la lista "tarjetas".' };
+    lista = Array.isArray(lista) ? lista : [];
+    const tarjetas = (Array.isArray(listaT) ? listaT : []).map((c, i) => {
+      if (!c || typeof c !== 'object') return { c: null, errores: ['No es un objeto.'], n: i + 1 };
+      const frente = String(alias(c, 'frente', 'pregunta', 'anverso', 'front') ?? '').trim();
+      const dorso = String(alias(c, 'dorso', 'respuesta', 'reverso', 'back') ?? '').trim();
+      const errores = [];
+      if (!frente) errores.push('Falta el frente.');
+      if (!dorso) errores.push('Falta el dorso.');
+      return { c: nuevaTarjeta({ frente, dorso }), errores, n: i + 1 };
+    });
 
     const numeros = lista.map((p) => (p && typeof p === 'object' ? alias(p, 'correcta', 'respuesta', 'respuesta_correcta', 'answer', 'correct') : undefined)).filter((v) => typeof v === 'number');
     const base1 = numeros.length > 0 && !numeros.includes(0);
@@ -1522,14 +1685,14 @@
       v.errores.forEach((x) => { if (!errores.includes(x) && !/Marcá|enunciado/.test(x)) errores.push(x); });
       return { q, notas, errores, n: i + 1 };
     });
-    return { materia, tema, items, nota: r.nota };
+    return { materia, tema, items, tarjetas, nota: r.nota };
   }
 
   function abrirImportar() {
     const m0 = matActual(), t0 = temaActual();
     const d = abrirModal('Pegar JSON del LM', `
       <label class="campo"><span>Pegá lo que te devolvió el LM (se aceptan bloques de código y texto alrededor)</span>
-        <textarea id="imp-texto" rows="8" placeholder='{ "materia": "...", "tema": "...", "preguntas": [ ... ] }'></textarea></label>
+        <textarea id="imp-texto" rows="8" placeholder='{ "materia": "...", "tema": "...", "preguntas": [ ... ], "tarjetas": [ ... ] }'></textarea></label>
       <p><label class="btn chico" style="cursor:pointer">…o abrir un archivo .json<input type="file" id="imp-archivo" accept=".json,.txt,application/json,text/plain" hidden></label></p>
       <div id="imp-prev"></div>`,
       '<button class="btn" id="imp-cancelar">Cancelar</button><button class="btn primario" id="imp-ok" disabled>Importar</button>');
@@ -1539,6 +1702,11 @@
     const prev = $('#imp-prev', d), ok = $('#imp-ok', d), txt = $('#imp-texto', d);
 
     const clave = (q) => norm(q.pregunta);
+    function duplicadasT() {
+      const mm = sel.mat !== '__nueva__' ? mat(sel.mat) : null;
+      const tt = mm && sel.tema !== '__nuevo__' ? mm.temas.find((t) => t.uid === sel.tema) : null;
+      return new Set(tt ? (tt.tarjetas || []).map((c) => norm(c.frente)) : []);
+    }
     function duplicadas() {
       const mm = sel.mat !== '__nueva__' ? mat(sel.mat) : null;
       const tt = mm && sel.tema !== '__nuevo__' ? mm.temas.find((t) => t.uid === sel.tema) : null;
@@ -1562,17 +1730,23 @@
       if (res.error) { prev.innerHTML = `<div class="nota mal">${esc(res.error)}</div>`; ok.disabled = true; return; }
       const mm = sel.mat !== '__nueva__' ? mat(sel.mat) : null;
       const dup = duplicadas();
+      const dupT = duplicadasT();
       const omitir = $('#imp-omitir', d)?.checked ?? true;
       const conRotas = $('#imp-rotas', d)?.checked ?? false;
       res.items.forEach((it) => {
         it.estado = !it.q || it.errores.length ? 'rota' : dup.has(clave(it.q)) ? 'dup' : it.notas.length ? 'rep' : 'ok';
       });
-      const cuenta = (e) => res.items.filter((i) => i.estado === e).length;
+      res.tarjetas.forEach((x) => {
+        x.estado = !x.c || x.errores.length ? 'rota' : dupT.has(norm(x.c.frente)) ? 'dup' : 'ok';
+      });
+      const cuenta = (e) => [...res.items, ...res.tarjetas].filter((i) => i.estado === e).length;
       const aImportar = res.items.filter((i) => i.q && (i.estado === 'ok' || i.estado === 'rep' || (i.estado === 'dup' && !omitir) || (i.estado === 'rota' && conRotas)));
+      const aImportarT = res.tarjetas.filter((x) => x.c && (x.estado === 'ok' || (x.estado === 'dup' && !omitir) || (x.estado === 'rota' && conRotas)));
       const etiqueta = { ok: ['ok', 'OK'], rep: ['rep', 'Reparada'], rota: ['rota', 'Con errores'], dup: ['dup', 'Ya existe'] };
       prev.innerHTML = `
         ${res.nota ? `<div class="nota">${esc(res.nota)}</div>` : ''}
-        <p class="nota"><b>${plural(res.items.length, 'pregunta', 'preguntas')}</b> en el JSON:
+        ${!res.items.length && sel.tema === '__nuevo__' ? '<div class="nota mal">Este JSON solo trae tarjetas. Un tema nuevo quedaría sin preguntas, y el sitio pide al menos una por tema: elegí un tema que ya tenga preguntas, o agregale una después.</div>' : ''}
+        <p class="nota"><b>${plural(res.items.length, 'pregunta', 'preguntas')}</b> y <b>${plural(res.tarjetas.length, 'tarjeta', 'tarjetas')}</b> en el JSON:
           ${cuenta('ok')} correctas, ${cuenta('rep')} reparadas, ${cuenta('rota')} con errores, ${cuenta('dup')} repetidas.</p>
         <div class="fila">
           <label class="campo"><span>Materia</span><select id="imp-mat">
@@ -1589,10 +1763,13 @@
         <label class="check"><input type="checkbox" id="imp-omitir" ${omitir ? 'checked' : ''}> Omitir las que ya existen en el tema elegido</label>
         <label class="check"><input type="checkbox" id="imp-rotas" ${conRotas ? 'checked' : ''}> Importar también las que tienen errores, para corregirlas a mano</label>
         <ul class="vista-prev">${res.items.map((it) => `<li><span class="et ${etiqueta[it.estado][0]}">${etiqueta[it.estado][1]}</span>
-          <span>${esc(it.q?.pregunta || '(vacía)')}${[...it.errores, ...it.notas].length ? `<br><small style="color:var(--tenue)">${esc([...it.errores, ...it.notas].join(' '))}</small>` : ''}</span></li>`).join('')}</ul>`;
-      ok.disabled = aImportar.length === 0;
-      ok.textContent = aImportar.length ? `Importar ${aImportar.length}` : 'Importar';
+          <span>${esc(it.q?.pregunta || '(vacía)')}${[...it.errores, ...it.notas].length ? `<br><small style="color:var(--tenue)">${esc([...it.errores, ...it.notas].join(' '))}</small>` : ''}</span></li>`).join('')}${res.tarjetas.map((x) => `<li><span class="et ${etiqueta[x.estado][0]}">${etiqueta[x.estado][1]}</span>
+          <span>🃏 ${esc(x.c?.frente || '(vacía)')}${x.errores.length ? `<br><small style="color:var(--tenue)">${esc(x.errores.join(' '))}</small>` : ''}</span></li>`).join('')}</ul>`;
+      const total = aImportar.length + aImportarT.length;
+      ok.disabled = total === 0;
+      ok.textContent = total ? `Importar ${total}` : 'Importar';
       ok._lista = aImportar;
+      ok._listaT = aImportarT;
       $('#imp-mat', d).onchange = (e) => { sel.mat = e.target.value; const m = mat(sel.mat); sel.tema = m && norm(res.tema) && m.temas.find((t) => norm(t.nombre) === norm(res.tema)) ? m.temas.find((t) => norm(t.nombre) === norm(res.tema)).uid : '__nuevo__'; pintar(); };
       $('#imp-tema', d).onchange = (e) => { sel.tema = e.target.value; pintar(); };
       $('#imp-nm', d)?.addEventListener('input', (e) => { sel.nombreMat = e.target.value; });
@@ -1618,12 +1795,32 @@
       let t = sel.tema === '__nuevo__' ? crearTema(m, (sel.nombreTema || '').trim() || 'Tema nuevo') : m.temas.find((x) => x.uid === sel.tema);
       const lista = ok._lista || [];
       lista.forEach((it) => { t.preguntas.push(it.q); if (it.estado === 'rota') E.abiertas.add(it.q.uid); });
+      const listaT = ok._listaT || [];
+      t.tarjetas ||= [];
+      listaT.forEach((x) => t.tarjetas.push(x.c));
       cerrarModal();
       seleccionar(m.uid, t.uid);
       refrescar();
-      avisar(`Se importaron ${plural(lista.length, 'pregunta', 'preguntas')} a “${t.nombre}”`);
+      const partes = [lista.length ? plural(lista.length, 'pregunta', 'preguntas') : '', listaT.length ? plural(listaT.length, 'tarjeta', 'tarjetas') : ''].filter(Boolean);
+      avisar(`Se importaron ${partes.join(' y ')} a “${t.nombre}”`);
     };
     txt.focus();
+  }
+
+const PROMPT_TARJETAS = "Sos un tutor experto en técnicas de estudio (recuperación activa y repetición espaciada). Tu tarea es convertir el material que te paso en TARJETAS DE ESTUDIO tipo Anki y devolverlas en un único JSON.\n\nCONTEXTO\n- Materia: [MATERIA]\n- Tema: [TEMA]\n- Cantidad de tarjetas: 25 (si el material no alcanza, hacé menos antes que inventar o repetir)\n\nREGLAS PARA CADA TARJETA\n1. Una sola idea por tarjeta. Si algo tiene varias partes, hacé varias tarjetas, o una tarjeta cuyo dorso sea una lista corta.\n2. \"frente\": una pregunta o consigna concreta, con UNA respuesta clara, que se pueda contestar de memoria. Tiene que entenderse sola, sin depender de otras tarjetas ni del material (\"según el texto\" y \"como vimos antes\" están prohibidos).\n3. \"dorso\": la respuesta directa en 1 a 3 oraciones (máximo 400 caracteres). Primero la respuesta; después, solo si hace falta, una aclaración corta. Si es una enumeración, usá líneas que empiecen con \"• \".\n4. Variá los tipos: definiciones, \"¿por qué?\", diferencias entre dos conceptos, ejemplos, causas y consecuencias, procedimientos. Fechas y autores solo si son centrales.\n5. Basate SOLO en el material. No inventes datos ni agregues contenido que no esté.\n6. Texto plano: sin numeración (\"1.\", \"Tarjeta 1\"), sin markdown (nada de **negritas**, #, tablas), sin HTML y sin emojis. Para un salto de línea usá \\n.\n7. Sin tarjetas repetidas ni casi iguales.\n8. Español rioplatense neutro, claro y sin vueltas.\n\nFORMATO DE SALIDA (obligatorio)\nDevolvé SOLO un bloque de código JSON, sin texto antes ni después, con esta estructura exacta:\n\n{\n  \"materia\": \"[MATERIA]\",\n  \"tema\": \"[TEMA]\",\n  \"tarjetas\": [\n    { \"frente\": \"...\", \"dorso\": \"...\" }\n  ]\n}\n\n- Los nombres de los campos son exactamente \"materia\", \"tema\", \"tarjetas\", \"frente\" y \"dorso\".\n- JSON válido: comillas dobles rectas, sin comas finales y sin comentarios. Las comillas dobles dentro de un texto se escriben \\\".\n\nEJEMPLO (de otra materia, solo para mostrar el estilo)\n{\n  \"materia\": \"Epistemología\",\n  \"tema\": \"Popper\",\n  \"tarjetas\": [\n    {\n      \"frente\": \"¿Qué propone el criterio de falsabilidad de Popper?\",\n      \"dorso\": \"Una teoría es científica si puede ser refutada por la experiencia.\\nNo importa cuántas veces se confirma: importa que pueda fallar.\"\n    },\n    {\n      \"frente\": \"¿En qué se diferencia el método deductivo de Popper del inductivismo?\",\n      \"dorso\": \"Popper no parte de observaciones para generalizar: propone conjeturas y trata de refutarlas con contrastaciones.\"\n    }\n  ]\n}\n\nAntes de responder, revisá una por una que cada tarjeta cumpla las reglas y que el JSON sea válido.\n\nMATERIAL\n\"\"\"\n[PEGAR ACÁ EL TEXTO, LOS APUNTES O EL TEMARIO]\n\"\"\"";
+
+  function abrirPromptTarjetas() {
+    const m = matActual(), t = temaActual();
+    const texto = PROMPT_TARJETAS.replaceAll('[MATERIA]', m?.nombre || '[MATERIA]').replaceAll('[TEMA]', t?.nombre || '[TEMA]');
+    const d = abrirModal('Prompt para que el LM arme tarjetas', `
+      <p class="nota">Copiá este prompt y pegalo en tu modelo de lenguaje. Reemplazá lo que está entre corchetes en <b>MATERIAL</b> por tus apuntes (y ajustá la cantidad de tarjetas). Después copiá lo que te devuelva y pegalo con <b>“Pegar JSON del LM”</b>.</p>
+      <textarea id="prompt-t" rows="16" readonly>${esc(texto)}</textarea>`,
+      '<button class="btn" id="p-cerrar">Cerrar</button><button class="btn primario" id="p-copiar">Copiar prompt</button>');
+    $('#p-cerrar', d).onclick = cerrarModal;
+    $('#p-copiar', d).onclick = async () => {
+      try { await navigator.clipboard.writeText(texto); avisar('Prompt copiado'); }
+      catch { $('#prompt-t', d).select(); avisar('Quedó seleccionado: copialo con Ctrl+C'); }
+    };
   }
 
   // ---------- Buscar y revisar ----------
@@ -1637,8 +1834,11 @@
       for (const m of E.materias) for (const t of m.temas) t.preguntas.forEach((q, i) => {
         if (hits.length < 60 && norm([q.pregunta, ...q.opciones, q.explicacion].join(' ')).includes(f)) hits.push({ m, t, q, i });
       });
+      for (const m of E.materias) for (const t of m.temas) (t.tarjetas || []).forEach((c, i) => {
+        if (hits.length < 60 && norm(`${c.frente} ${c.dorso}`).includes(f)) hits.push({ m, t, q: c, i, tarjeta: true });
+      });
       res.innerHTML = hits.length
-        ? hits.map((h) => `<button class="resultado-busqueda" data-m="${h.m.uid}" data-t="${h.t.uid}" data-q="${h.q.uid}">${esc(h.q.pregunta || '(sin enunciado)')}<small>${esc(h.m.nombre)} › ${esc(h.t.nombre)}, pregunta ${h.i + 1}</small></button>`).join('')
+        ? hits.map((h) => `<button class="resultado-busqueda" data-m="${h.m.uid}" data-t="${h.t.uid}" data-q="${h.q.uid}">${esc(h.tarjeta ? `🃏 ${h.q.frente || '(sin frente)'}` : (h.q.pregunta || '(sin enunciado)'))}<small>${esc(h.m.nombre)} › ${esc(h.t.nombre)}, ${h.tarjeta ? 'tarjeta' : 'pregunta'} ${h.i + 1}</small></button>`).join('')
         : '<p class="pista">Sin resultados.</p>';
       $$('.resultado-busqueda', res).forEach((b) => b.addEventListener('click', () => irA(b.dataset.m, b.dataset.t, b.dataset.q)));
     };
