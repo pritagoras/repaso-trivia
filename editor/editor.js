@@ -1,19 +1,15 @@
-// ==========================================================
-// editor.js: editor local de materias, temas y preguntas.
-//
-// Todo ocurre en tu navegador: no se sube nada a ningún lado.
-// Lee la carpeta data/ del repo, te deja editar y después:
-//   - escribe los cambios directo en la carpeta (Chrome / Edge), o
-//   - descarga un ZIP con la carpeta data/ lista para pisar la del repo.
-// Cada tema puede tener también tarjetas tipo Anki ("tarjetas": frente y dorso) para el repaso diario.
-// Las imágenes de las preguntas se recortan y se reducen en el navegador, y se guardan en data/img/.
-// ==========================================================
 'use strict';
 
 (() => {
   // ---------- Utilidades ----------
-  const $ = (s, r = document) => r.querySelector(s); const $\$ = (s, r = document) => [...r.querySelectorAll(s)];
-  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&#39;' }[c]));
+  const $ = (s, r = document) => r.querySelector(s); const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  }[c] || c));
   const norm = (s) => String(s ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
   const LETRAS = ['A', 'B', 'C', 'D'];
   const EMOJIS = ['📚', '🧬', '🔬', '🧪', '⚗️', '🧠', '🫀', '🦴', '💊', '🌱', '🌍', '📜', '⚖️', '🏛️', '💻', '📐', '➗', '📊', '💰', '🗣️', '🎨', '🎵', '⚽', '🩺'];
@@ -26,7 +22,7 @@
 
   const slug = (s) =>
     String(s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+\$/g, '') || 'sin-nombre';
+      .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'sin-nombre';
 
   const mezclar = (lista) => {
     const a = [...lista];
@@ -39,7 +35,8 @@
 
   let _temporizadorAviso = null;
   function avisar(texto) {
-    const el = \$('#aviso');
+    const el = $('#aviso');
+    if (!el) return;
     el.textContent = texto;
     el.classList.add('visible');
     clearTimeout(_temporizadorAviso);
@@ -55,18 +52,18 @@
   const E = {
     materias: [],
     sel: { materia: null, tema: null },
-    abiertas: new Set(),           // uids de preguntas desplegadas
+    abiertas: new Set(),
     filtro: '',
-    handle: null,                  // carpeta data/ con permiso de escritura (si se abrió con la API)
+    handle: null,
     base: { archivos: new Map(), crudos: new Map(), secuencia: '', indice: '' },
     analisis: { lista: [], conteo: new Map(), errores: 0, avisos: 0 },
     avisosCarga: [],
-    imgs: new Map(),               // nombre de imagen -> Blob (para vista previa y para escribirla al guardar)
-    imgNuevas: new Set(),          // imágenes cargadas acá que todavía no están en la carpeta del repo
-    imgExistentes: new Set(),      // nombres que ya estaban en data/img/ al abrir la carpeta
-    imgListadoOk: false,           // true si se pudo leer data/img/ (permite avisar de imágenes faltantes)
+    imgs: new Map(),
+    imgNuevas: new Set(),
+    imgExistentes: new Set(),
+    imgListadoOk: false,
   };
-  const PROB = new WeakMap();      // pregunta -> { errores, avisos }
+  const PROB = new WeakMap();
 
   // ---------- Modelo ----------
   const nuevaPregunta = (o = {}) => ({
@@ -107,11 +104,11 @@
   }
 
   const nombreImagen = (ruta) => {
-    const m = /^data\/img\/([\w.%-]+)\$/.exec(String(ruta || '').trim());
+    const m = /^data\/img\/([\w.%-]+)$/.exec(String(ruta || '').trim());
     return m ? m[1] : null;
   };
 
-  // ---------- Validación (misma lógica que tools/validar.py) ----------
+  // ---------- Validación ----------
   const REF_LETRA = /\b(opci[oó]n|alternativa|inciso|respuesta)\s+[A-D]\b/i;
   const COMODINES = /\b(todas las anteriores|ninguna de las anteriores|ambas son correctas|a y b)\b/i;
 
@@ -130,9 +127,9 @@
     else if (REF_LETRA.test(q.explicacion)) avisos.push('La explicación menciona una letra de opción; el juego mezcla el orden.');
     if (norm(q.imagen)) {
       const n = nombreImagen(q.imagen);
-      if (!n && !/^https:\/\/\S+\$/i.test(q.imagen.trim())) avisos.push('La ruta de la imagen no es válida: el juego no la va a mostrar (tiene que ser data/img/... o https://...).');
+      if (!n && !/^https:\/\/\S+$/i.test(q.imagen.trim())) avisos.push('La ruta de la imagen no es válida.');
       else if (n && E.imgListadoOk && !E.imgExistentes.has(n) && !E.imgs.has(n)) avisos.push(`La imagen "${n}" no está en data/img/.`);
-      if (!norm(q.imagenAlt)) avisos.push('La imagen no tiene descripción (sirve para accesibilidad).');
+      if (!norm(q.imagenAlt)) avisos.push('La imagen no tiene descripción.');
     }
     return { errores, avisos };
   }
@@ -141,8 +138,8 @@
     const errores = [], avisos = [];
     if (!norm(c.frente)) errores.push('Falta el frente.');
     if (!norm(c.dorso)) errores.push('Falta el dorso.');
-    if (norm(c.frente).length > 280) avisos.push('El frente es largo: una tarjeta rinde más con una sola idea corta.');
-    if (norm(c.dorso).length > 600) avisos.push('El dorso es muy largo; probá partirlo en varias tarjetas.');
+    if (norm(c.frente).length > 280) avisos.push('El frente es largo: conviene usar una sola idea corta.');
+    if (norm(c.dorso).length > 600) avisos.push('El dorso es muy largo.');
     return { errores, avisos };
   }
 
@@ -168,7 +165,7 @@
       m.temas.forEach((t) => {
         if (!norm(t.nombre)) reg('e', m, t, null, 'El tema no tiene nombre.');
         if (!t.preguntas.length && (!t.tarjetas || !t.tarjetas.length)) {
-          reg('e', m, t, null, 'El tema debe contener al menos una pregunta o una tarjeta.');
+          reg('e', m, t, null, 'El tema debe contener al menos una pregunta o al menos una tarjeta.');
         }
         const vistas = new Map();
         t.preguntas.forEach((q, i) => {
@@ -199,7 +196,7 @@
     E.analisis = { lista, conteo, errores, avisos };
   }
 
-  // ---------- Serialización (qué se escribe en cada archivo) ----------
+  // ---------- Serialización ----------
   const J = (v) => JSON.stringify(v);
 
   function serializarPregunta(q) {
@@ -336,7 +333,7 @@
     releerOrdenesDeArchivos(archivos);
   }
 
-  // ---------- ZIP (sin compresión, sin librerías) ----------
+  // ---------- ZIP ----------
   const TABLA_CRC = (() => {
     const t = new Uint32Array(256);
     for (let n = 0; n < 256; n++) {
@@ -370,7 +367,7 @@
       partes.push(new Uint8Array(loc.buffer), nombre, datos);
       const cen = new DataView(new ArrayBuffer(46));
       cen.setUint32(0, 0x02014b50, true); cen.setUint16(4, 20, true); cen.setUint16(6, 20, true); cen.setUint16(8, 0x0800, true); cen.setUint16(10, 0, true);
-      cen.setUint16(12, hora, true); cen.setUint14(14, fecha, true); cen.setUint32(16, crc, true);
+      cen.setUint16(12, hora, true); cen.setUint16(14, fecha, true); cen.setUint32(16, crc, true);
       cen.setUint32(20, datos.length, true); cen.setUint32(24, datos.length, true); cen.setUint16(28, nombre.length, true);
       cen.setUint32(42, offset, true);
       central.push(new Uint8Array(cen.buffer), nombre);
@@ -399,7 +396,7 @@
     return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
   };
 
-  // ---------- Carga de archivos ----------
+  // ---------- Carga ----------
   function cargarArchivos(mapa) {
     const grupos = new Map();
     const problemas = [], avisos = [], gestionados = [];
@@ -520,7 +517,7 @@
     return mapa;
   }
 
-  // ---------- Imágenes de las preguntas (data/img/) ----------
+  // ---------- Imágenes ----------
   const MAX_LADO = 1200;
 
   function reiniciarImagenes(listadoOk = false, existentes = new Set(), blobs = new Map()) {
@@ -567,7 +564,6 @@
     return { blob, nombre };
   }
 
-  // ---------- Recorte de la imagen antes de usarla ----------
   const LIMITE_BASE = 4096;
 
   async function abrirRecorte(archivo) {
@@ -590,7 +586,7 @@
           <button class="btn chico" id="rec-der" type="button" aria-label="Girar a la derecha">Girar ↷</button>
         </div>
         <div class="rec-escena"><canvas id="rec-canvas" aria-label="Imagen a recortar"></canvas></div>
-        <p class="pista">Arrastrá el recuadro para moverlo, y las esquinas o los bordes para cambiarle el tamaño. Si arrastrás fuera del recuadro, dibujás uno nuevo.</p>
+        <p class="pista">Arrastrá el recuadro para moverlo, y las esquinas o bordes para cambiarle el tamaño.</p>
         <span class="rotulo">Así va a quedar</span>
         <div class="rec-prev"><canvas id="rec-prev"></canvas></div>
         <p class="pista" id="rec-info"></p>`,
@@ -683,15 +679,13 @@
         const k = Math.min(1, 520 / c.width, 150 / c.height);
         prev.width = Math.max(1, Math.round(c.width * k)); prev.height = Math.max(1, Math.round(c.height * k));
         prev.getContext('2d').drawImage(c, 0, 0, prev.width, prev.height);
-        const nota = c.height / c.width > 1.2
-          ? ' En el juego se ve entera, pero las imágenes muy altas se achican para entrar en pantalla.'
-          : ' En el juego se ve entera, sin recortes extra.';
-        info.textContent = `Tamaño final: ${c.width} × ${c.height} px.${nota}`;
+        info.textContent = `Tamaño final: ${c.width} × ${c.height} px. En el juego se ve entera.`;
         clearTimeout(temporizadorTam);
         temporizadorTam = setTimeout(() => c.toBlob((b) => {
-          if (b && d.open) info.textContent = `Tamaño final: ${c.width} × ${c.height} px (unos ${Math.max(1, Math.round(b.size / 1024))} KB).${nota}`;
+          if (b && d.open) info.textContent = `Tamaño final: ${c.width} × ${c.height} px (unos ${Math.max(1, Math.round(b.size / 1024))} KB). En el juego se ve entera.`;
         }, 'image/webp', 0.85), 300);
       }
+
       let cuadroPedido = false;
       const pedirRefresco = () => {
         if (cuadroPedido) return;
@@ -738,7 +732,6 @@
       const soltar = () => { arrastre = null; };
       canvas.addEventListener('pointerup', soltar);
       canvas.addEventListener('pointercancel', soltar);
-      canvas.addEventListener('click', (e) => e.stopPropagation());
 
       $$('[data-r]', d).forEach((b) => b.addEventListener('click', () => {
         const [clave, , r] = RATIOS.find(([c]) => c === b.dataset.r);
@@ -787,7 +780,7 @@
     return url;
   }
 
-  // ---------- Escritura en la carpeta (Chrome / Edge) ----------
+  // ---------- Escritura ----------
   async function dirDe(raiz, partes, crear) {
     let d = raiz;
     for (const p of partes) d = await d.getDirectoryHandle(p, { create: crear });
@@ -858,16 +851,18 @@
     return t;
   }
 
-  // ---------- Estado, borrador y avisos ----------
+  // ---------- Estado ----------
   function renderEstado() {
     const plan = calcularPlan();
     E.plan = plan;
     const n = cantidadCambios(plan);
     const chip = $('#estado');
+    if (!chip) return;
     const sucio = n > 0 || (plan.indiceCambio && E.materias.length > 0);
     chip.textContent = n > 0 ? `${plural(n, 'archivo', 'archivos')} con cambios` : (sucio ? 'Índice por actualizar' : 'Sin cambios');
     chip.classList.toggle('sucio', sucio);
     const b = $('#n-prob');
+    if (!b) return;
     const { errores, avisos } = E.analisis;
     b.hidden = !(errores || avisos);
     b.textContent = errores || avisos;
@@ -903,6 +898,7 @@
     try { d = JSON.parse(localStorage.getItem(CLAVE_BORRADOR)); } catch { d = null; }
     if (!d || !Array.isArray(d.materias) || !d.base) return;
     const b = $('#banner');
+    if (!b) return;
     b.hidden = false;
     b.innerHTML = `<span>Hay un borrador sin guardar del ${esc(new Date(d.t).toLocaleString('es-AR'))} (${plural(d.materias.length, 'materia', 'materias')}).</span>
       <button class="btn chico primario" id="bn-rest">Restaurar</button><button class="btn chico" id="bn-desc">Descartar</button>`;
@@ -917,8 +913,7 @@
       E.sel = { materia: E.materias[0]?.uid ?? null, tema: null };
       b.hidden = true;
       pintarTodo();
-      const conImagenes = E.materias.some((m) => m.temas.some((t) => t.preguntas.some((q) => nombreImagen(q.imagen))));
-      avisar(conImagenes ? 'Borrador restaurado. Si habías cargado imágenes nuevas sin guardar, volvé a elegirlas.' : 'Borrador restaurado');
+      avisar('Borrador restaurado');
     };
     $('#bn-desc').onclick = () => { try { localStorage.removeItem(CLAVE_BORRADOR); } catch { } b.hidden = true; };
   }
@@ -935,17 +930,20 @@
     if (!d.open) d.showModal();
     return d;
   }
-  const cerrarModal = () => { const d = $('#modal'); if (d.open) d.close(); };
-  $('#modal').addEventListener('click', (e) => { if (e.target === e.currentTarget) cerrarModal(); });
+  const cerrarModal = () => { const d = $('#modal'); if (d && d.open) d.close(); };
+  const modalEl = $('#modal');
+  if (modalEl) modalEl.addEventListener('click', (e) => { if (e.target === e.currentTarget) cerrarModal(); });
 
   // ---------- Lateral ----------
   function renderLateral() {
+    const el = $('#lateral');
+    if (!el) return;
     const c = E.analisis.conteo;
     const punto = (u) => {
       const x = c.get(u);
       return x?.e ? '<span class="punto err" title="Tiene errores"></span>' : x?.a ? '<span class="punto avi" title="Tiene avisos"></span>' : '';
     };
-    $('#lateral').innerHTML = `
+    el.innerHTML = `
       <div class="lat-acciones"><button class="btn chico" data-accion="nueva-materia">+ Materia</button>
         ${matActual() ? '<button class="btn chico" data-accion="nuevo-tema">+ Tema</button>' : ''}</div>
       ${E.materias.length ? '' : '<p class="pista">Todavía no hay materias.</p>'}
@@ -962,6 +960,7 @@
   // ---------- Vistas principales ----------
   function renderPrincipal() {
     const cont = $('#principal');
+    if (!cont) return;
     const m = matActual(), t = temaActual();
     if (!E.materias.length) cont.innerHTML = htmlBienvenida();
     else if (m && t) { cont.innerHTML = htmlTema(m, t); renderPreguntas(); renderTarjetas(); }
@@ -1033,7 +1032,6 @@
         <div class="paleta colores" aria-label="Colores sugeridos">${COLORES.map((c) => `<button data-accion="m-color" data-v="${c}" style="background:${c}" aria-label="Usar color ${c}"></button>`).join('')}</div>
         <details style="margin-top:.9rem"><summary class="rotulo" style="cursor:pointer">Avanzado</summary>
           <label class="campo"><span>Carpeta dentro de data/</span><input type="text" data-campo="m-carpeta" value="${esc(m.carpeta)}"></label>
-          <p class="pista">Si la cambiás, todos los archivos de la materia se mueven a la carpeta nueva al guardar.</p>
         </details>
       </div>
       <div class="tarjeta">
@@ -1088,7 +1086,6 @@
           <button class="btn chico" data-accion="importar">Pegar JSON del LM</button>
           <button class="btn chico primario" data-accion="c-nueva">+ Tarjeta</button>
         </div>
-        <p class="pista">Cada tarjeta tiene un frente (la pregunta o el concepto) y un dorso (la respuesta). En el juego se dan vuelta y vos marcás qué tan bien la sabías: con eso se arma el “Repaso de hoy”.</p>
         <div id="lista-c"></div>
       </section>`;
   }
@@ -1121,7 +1118,7 @@
     const lista = t.tarjetas || [];
     cont.innerHTML = lista.length
       ? lista.map((c, i) => htmlTarjeta(c, i)).join('')
-      : '<div class="vacia">Este tema todavía no tiene tarjetas. Usá “+ Tarjeta”, o pedile al LM que las arme con “Prompt para el LM” y pegalas con “Pegar JSON del LM”.</div>';
+      : '<div class="vacia">Este tema todavía no tiene tarjetas.</div>';
   }
 
   function tarjetaDe(el) {
@@ -1152,7 +1149,6 @@
           <input type="radio" name="c-${q.uid}" value="${LETRAS[k]}" data-campo="q-correcta" ${q.correcta === LETRAS[k] ? 'checked' : ''} aria-label="La correcta es la ${LETRAS[k]}">
           <span class="letra">${LETRAS[k]}</span>
           <input type="text" data-campo="q-op${k}" value="${esc(o)}" aria-label="Opción ${LETRAS[k]}"></div>`).join('')}
-        <p class="pista">El juego mezcla el orden de las opciones, así que no importa dónde pongas la correcta.</p>
         <label class="campo"><span>Explicación</span><textarea rows="2" data-campo="q-explicacion">${esc(q.explicacion)}</textarea></label>
         <div class="campo-imagen">
           <span class="rotulo">Imagen (opcional)</span>
@@ -1161,8 +1157,7 @@
             <label class="btn chico" style="cursor:pointer">${q.imagen ? 'Cambiar imagen' : 'Elegir imagen'}<input type="file" accept="image/*" data-campo="q-imagen-archivo" hidden></label>
             ${q.imagen ? '<button class="btn chico peligro" data-accion="q-img-quitar">Quitar imagen</button>' : ''}
           </div>
-          ${q.imagen ? `<label class="campo"><span>Descripción de la imagen (para accesibilidad)</span><input type="text" data-campo="q-imagen-alt" value="${esc(q.imagenAlt)}"></label>` : ''}
-          <p class="pista">Se reduce a ${MAX_LADO} px y se guarda en data/img/ cuando guardás los cambios.</p>
+          ${q.imagen ? `<label class="campo"><span>Descripción de la imagen</span><input type="text" data-campo="q-imagen-alt" value="${esc(q.imagenAlt)}"></label>` : ''}
         </div>
         <ul class="problemas" data-problemas>${htmlProblemas(r)}</ul>
         <div class="acciones-q">
@@ -1183,7 +1178,7 @@
     const items = t.preguntas.map((q, i) => [q, i]).filter(([q]) => !f || norm([q.pregunta, ...q.opciones, q.explicacion].join(' ')).includes(f));
     cont.innerHTML = items.length
       ? items.map(([q, i]) => htmlPregunta(q, i)).join('')
-      : `<div class="vacia">${t.preguntas.length ? 'Ninguna pregunta coincide con el filtro.' : 'Este tema todavía no tiene preguntas. Usá “+ Pregunta” o “Pegar JSON del LM”.'}</div>`;
+      : `<div class="vacia">${t.preguntas.length ? 'Ninguna pregunta coincide con el filtro.' : 'Este tema no tiene preguntas de opción múltiple.'}</div>`;
   }
 
   function refrescarTarjetas() {
@@ -1197,11 +1192,12 @@
       card.classList.toggle('con-aviso', !r.errores.length && r.avisos.length > 0);
       card.querySelector('.resumen').textContent = q.pregunta || '(sin enunciado)';
       const chip = card.querySelector('.chip');
-      chip.textContent = q.correcta || '?';
-      chip.classList.toggle('vacio', !q.correcta);
+      if (chip) {
+        chip.textContent = q.correcta || '?';
+        chip.classList.toggle('vacio', !q.correcta);
+      }
       const ul = card.querySelector('[data-problemas]');
       if (ul) ul.innerHTML = htmlProblemas(r);
-      card.querySelectorAll('.opcion-edit').forEach((fila, k) => fila.classList.toggle('correcta', q.correcta === LETRAS[k]));
     });
     $$('#lista-c .tarj').forEach((card) => {
       const c = (t.tarjetas || []).find((x) => x.uid === card.dataset.c);
@@ -1219,7 +1215,7 @@
     if (ruta && m) ruta.textContent = `data/${m.carpeta}/${nombreArchivo(t, m.temas.indexOf(t))}`;
   }
 
-  // ---------- Edición de campos ----------
+  // ---------- Edición ----------
   function preguntaDe(el) {
     const card = el.closest('[data-q]');
     const t = temaActual();
@@ -1233,10 +1229,10 @@
     if (!campo) return;
     const m = matActual(), t = temaActual();
     switch (campo) {
-      case 'm-nombre': m.nombre = el.value; $('#titulo-materia').textContent = `${m.emoji} ${m.nombre || 'Sin nombre'}`; break;
-      case 'm-emoji': m.emoji = el.value.trim() || '📚'; $('#titulo-materia').textContent = `${m.emoji} ${m.nombre || 'Sin nombre'}`; break;
+      case 'm-nombre': m.nombre = el.value; const tm = $('#titulo-materia'); if (tm) tm.textContent = `${m.emoji} ${m.nombre || 'Sin nombre'}`; break;
+      case 'm-emoji': m.emoji = el.value.trim() || '📚'; const tm2 = $('#titulo-materia'); if (tm2) tm2.textContent = `${m.emoji} ${m.nombre || 'Sin nombre'}`; break;
       case 'm-color': m.color = el.value.toUpperCase(); break;
-      case 't-nombre': t.nombre = el.value; $('#titulo-tema').textContent = t.nombre || 'Tema sin nombre'; break;
+      case 't-nombre': t.nombre = el.value; const tt = $('#titulo-tema'); if (tt) tt.textContent = t.nombre || 'Tema sin nombre'; break;
       case 'c-frente':
       case 'c-dorso': {
         const c = tarjetaDe(el);
@@ -1280,11 +1276,13 @@
       avisar(`Imagen lista (${Math.max(1, Math.round(blob.size / 1024))} KB)`);
     } catch (err) {
       console.error(err);
-      avisar('No se pudo leer esa imagen. Probá con un PNG, JPG o WebP.');
+      avisar('No se pudo leer esa imagen.');
     }
   }
 
   function hidratarImagenes() {
+    const principal = $('#principal');
+    if (!principal) return;
     $$('#principal img[data-img]:not([data-listo])').forEach(async (img) => {
       img.dataset.listo = '1';
       const ruta = img.dataset.img;
@@ -1294,12 +1292,13 @@
       else {
         const p = document.createElement('p');
         p.className = 'pista';
-        p.textContent = 'No se puede mostrar la vista previa (la imagen no está cargada en esta sesión).';
+        p.textContent = 'No se puede mostrar la vista previa.';
         img.replaceWith(p);
       }
     });
   }
-  new MutationObserver(hidratarImagenes).observe($('#principal'), { childList: true, subtree: true });
+  const principalEl = $('#principal');
+  if (principalEl) new MutationObserver(hidratarImagenes).observe(principalEl, { childList: true, subtree: true });
 
   function onChange(e) {
     const el = e.target;
@@ -1325,7 +1324,7 @@
     }
   }
 
-  // ---------- Acciones (clics) ----------
+  // ---------- Acciones ----------
   const mover = (lista, i, d) => {
     const j = i + d;
     if (j < 0 || j >= lista.length) return false;
@@ -1353,7 +1352,7 @@
 
   async function abrirCarpeta() {
     if (!descartarSiHaceFalta()) return;
-    if (!TIENE_API_CARPETAS) { $('#in-carpeta').click(); return; }
+    if (!TIENE_API_CARPETAS) { $('#in-carpeta')?.click(); return; }
     try {
       const h = await window.showDirectoryPicker({ mode: 'readwrite' });
       const dataDir = await resolverDataDir(h);
@@ -1369,15 +1368,10 @@
   }
 
   function despuesDeCargar(mapa) {
-    $('#banner').hidden = true;
+    const b = $('#banner'); if (b) b.hidden = true;
     pintarTodo();
     const n = E.materias.length;
-    avisar(n ? `Abierto: ${plural(n, 'materia', 'materias')}, ${plural(E.materias.reduce((s, m) => s + totalPreguntas(m), 0), 'pregunta', 'preguntas')}` : 'La carpeta no tiene materias todavía');
-    if (E.avisosCarga.length) {
-      abrirModal('Cosas a tener en cuenta al abrir', `
-        <p class="nota">Estos archivos no se pudieron leer del todo. Los que dicen “No se tocó” se dejan como están y no se modifican ni se borran.</p>
-        <ul class="problemas">${E.avisosCarga.map((x) => `<li class="a">${esc(x)}</li>`).join('')}</ul>`, '<button class="btn primario" onclick="this.closest(\'dialog\').close()">Entendido</button>');
-    }
+    avisar(n ? `Abierto: ${plural(n, 'materia', 'materias')}` : 'La carpeta no tiene materias todavía');
   }
 
   const ACCIONES = {
@@ -1410,17 +1404,14 @@
       const nombre = window.prompt(`Nombre del tema nuevo en “${m.nombre}”:`);
       if (!nombre?.trim()) return;
       const t = crearTema(m, nombre.trim());
-      const q = nuevaPregunta();
-      t.preguntas.push(q);
-      E.abiertas.add(q.uid);
       seleccionar(m.uid, t.uid);
       refrescar();
     },
-    'mat-sube': () => { if (mover(E.materias, E.materias.indexOf(matActual()), -1)) { pintarTodo(); } },
-    'mat-baja': () => { if (mover(E.materias, E.materias.indexOf(matActual()), 1)) { pintarTodo(); } },
+    'mat-sube': () => { if (mover(E.materias, E.materias.indexOf(matActual()), -1)) pintarTodo(); },
+    'mat-baja': () => { if (mover(E.materias, E.materias.indexOf(matActual()), 1)) pintarTodo(); },
     'mat-borrar': () => {
       const m = matActual();
-      if (!window.confirm(`¿Eliminar la materia “${m.nombre}” con ${plural(m.temas.length, 'tema', 'temas')} y ${plural(totalPreguntas(m), 'pregunta', 'preguntas')}?\n\nSe borran sus archivos al guardar.`)) return;
+      if (!window.confirm(`¿Eliminar la materia “${m.nombre}”?`)) return;
       E.materias.splice(E.materias.indexOf(m), 1);
       E.sel = { materia: E.materias[0]?.uid ?? null, tema: null };
       pintarTodo();
@@ -1437,7 +1428,7 @@
     't-copiar': async () => {
       const m = matActual(), t = temaActual();
       try { await navigator.clipboard.writeText(serializarTema(m, t)); avisar('JSON copiado al portapapeles'); }
-      catch { avisar('El navegador bloqueó el portapapeles; usá “Descargar JSON”.'); }
+      catch { avisar('El navegador bloqueó el portapapeles.'); }
     },
     't-dup': () => {
       const m = matActual(), t = temaActual();
@@ -1454,15 +1445,16 @@
     },
     't-borrar': () => {
       const m = matActual(), t = temaActual();
-      if (!window.confirm(`¿Eliminar el tema “${t.nombre}” con ${plural(t.preguntas.length, 'pregunta', 'preguntas')}?\n\nSe borra su archivo al guardar.`)) return;
+      if (!window.confirm(`¿Eliminar el tema “${t.nombre}”?`)) return;
       m.temas.splice(m.temas.indexOf(t), 1);
       seleccionar(m.uid);
       refrescar();
     },
-    'abrir-todas': () => { temaActual().preguntas.forEach((q) => E.abiertas.add(q.uid)); renderPreguntas(); },
+    'abrir-todas': () => { const t = temaActual(); if (t) t.preguntas.forEach((q) => E.abiertas.add(q.uid)); renderPreguntas(); },
     'cerrar-todas': () => { E.abiertas.clear(); renderPreguntas(); },
     'q-nueva': () => {
       const t = temaActual();
+      if (!t) return;
       const q = nuevaPregunta();
       t.preguntas.push(q);
       E.abiertas.add(q.uid);
@@ -1477,8 +1469,10 @@
     'alternar': (el) => {
       const card = el.closest('[data-q]');
       const t = temaActual();
+      if (!card || !t) return;
       const i = t.preguntas.findIndex((q) => q.uid === card.dataset.q);
       const q = t.preguntas[i];
+      if (!q) return;
       if (E.abiertas.has(q.uid)) E.abiertas.delete(q.uid); else E.abiertas.add(q.uid);
       card.outerHTML = htmlPregunta(q, i);
       $(`[data-q="${q.uid}"] .preg-cab`)?.focus();
@@ -1487,6 +1481,7 @@
     'q-baja': (el) => moverPregunta(el, 1),
     'q-dup': (el) => {
       const t = temaActual(), q = preguntaDe(el);
+      if (!t || !q) return;
       const copia = JSON.parse(JSON.stringify(q));
       copia.uid = uid();
       t.preguntas.splice(t.preguntas.indexOf(q) + 1, 0, copia);
@@ -1497,17 +1492,19 @@
     },
     'q-mezclar': (el) => {
       const q = preguntaDe(el);
+      if (!q) return;
       const orden = mezclar([0, 1, 2, 3]);
       const viejaCorrecta = LETRAS.indexOf(q.correcta);
       q.opciones = orden.map((i) => q.opciones[i]);
       if (viejaCorrecta >= 0) q.correcta = LETRAS[orden.indexOf(viejaCorrecta)];
       const t = temaActual();
       const card = el.closest('[data-q]');
-      card.outerHTML = htmlPregunta(q, t.preguntas.indexOf(q));
+      if (card && t) card.outerHTML = htmlPregunta(q, t.preguntas.indexOf(q));
       refrescar();
     },
     'c-nueva': () => {
       const t = temaActual();
+      if (!t) return;
       t.tarjetas ||= [];
       const c = nuevaTarjeta();
       t.tarjetas.push(c);
@@ -1521,6 +1518,7 @@
     'c-baja': (el) => moverTarjeta(el, 1),
     'c-dup': (el) => {
       const t = temaActual(), c = tarjetaDe(el);
+      if (!t || !c) return;
       const copia = JSON.parse(JSON.stringify(c));
       copia.uid = uid();
       t.tarjetas.splice(t.tarjetas.indexOf(c) + 1, 0, copia);
@@ -1530,6 +1528,7 @@
     },
     'c-borrar': (el) => {
       const t = temaActual(), c = tarjetaDe(el);
+      if (!t || !c) return;
       if (!window.confirm('¿Eliminar esta tarjeta?')) return;
       t.tarjetas.splice(t.tarjetas.indexOf(c), 1);
       renderTarjetas();
@@ -1538,6 +1537,7 @@
     'c-prompt': () => abrirPromptTarjetas(),
     'q-img-quitar': (el) => {
       const q = preguntaDe(el);
+      if (!q) return;
       q.imagen = '';
       q.imagenAlt = '';
       repintarPregunta(q);
@@ -1545,18 +1545,18 @@
     },
     'q-borrar': (el) => {
       const t = temaActual(), q = preguntaDe(el);
+      if (!t || !q) return;
       if (!window.confirm('¿Eliminar esta pregunta?')) return;
       t.preguntas.splice(t.preguntas.indexOf(q), 1);
       E.abiertas.delete(q.uid);
       renderPreguntas();
       refrescar();
-      const num = $('.estadisticas b'); if (num) num.textContent = t.preguntas.length;
     },
   };
 
   function moverTarjeta(el, d) {
     const t = temaActual(), c = tarjetaDe(el);
-    if (!mover(t.tarjetas, t.tarjetas.indexOf(c), d)) return;
+    if (!t || !c || !mover(t.tarjetas, t.tarjetas.indexOf(c), d)) return;
     renderTarjetas();
     refrescar();
     $(`[data-c="${c.uid}"]`)?.scrollIntoView({ block: 'center' });
@@ -1564,7 +1564,7 @@
 
   function moverPregunta(el, d) {
     const t = temaActual(), q = preguntaDe(el);
-    if (!mover(t.preguntas, t.preguntas.indexOf(q), d)) return;
+    if (!t || !q || !mover(t.preguntas, t.preguntas.indexOf(q), d)) return;
     renderPreguntas();
     refrescar();
     $(`[data-q="${q.uid}"]`)?.scrollIntoView({ block: 'center' });
@@ -1580,10 +1580,13 @@
     const el = e.target;
     if ((e.key === 'Enter' || e.key === ' ') && el.dataset?.accion === 'alternar') { e.preventDefault(); ACCIONES.alternar(el); }
   });
-  $('#principal').addEventListener('input', onInput);
-  $('#principal').addEventListener('change', onChange);
 
-  // ---------- Importar lo que devuelve el LM ----------
+  if (principalEl) {
+    principalEl.addEventListener('input', onInput);
+    principalEl.addEventListener('change', onChange);
+  }
+
+  // ---------- Importar LM ----------
   function extraerJSON(texto) {
     let t = texto.trim();
     const cerco = t.match(/```(?:json)?\s*([\s\S]*?)```/i);
@@ -1644,14 +1647,13 @@
       ops = Array.isArray(ops) ? ops.map((o) => String(o ?? '').trim()) : [];
       if (ops.length >= 2 && ops.every((o) => /^[A-Da-d][\)\.\:]\s+/.test(o))) {
         ops = ops.map((o) => o.replace(/^[A-Da-d][\)\.\:]\s+/, ''));
-        notas.push('Se quitaron los prefijos "A)", "B)"… de las opciones.');
       }
       if (ops.length !== 4) errores.push(`Tiene ${ops.length} opciones (se necesitan 4).`);
       const bruto = alias(p, 'correcta', 'respuesta', 'respuesta_correcta', 'answer', 'correct');
       let letra = '';
       if (typeof bruto === 'number') {
         const idx = base1 ? bruto - 1 : bruto;
-        if (idx >= 0 && idx < 4) { letra = LETRAS[idx]; notas.push(`La correcta venía como número (${bruto}); ahora es ${letra}.`); }
+        if (idx >= 0 && idx < 4) { letra = LETRAS[idx]; }
       } else if (typeof bruto === 'string') {
         const s = bruto.trim();
         const m1 = s.match(/^\(?([A-Da-d])[\)\.\:]?$/);
@@ -1659,8 +1661,8 @@
         else {
           const j = ops.findIndex((o) => norm(o) === norm(s));
           const m2 = s.match(/^\(?([A-Da-d])[\)\.\:]\s/);
-          if (j >= 0) { letra = LETRAS[j]; notas.push(`La correcta venía como texto; ahora es ${letra}.`); }
-          else if (m2) { letra = m2[1].toUpperCase(); notas.push(`La correcta venía como "${s.slice(0, 30)}"; se tomó ${letra}.`); }
+          if (j >= 0) { letra = LETRAS[j]; }
+          else if (m2) { letra = m2[1].toUpperCase(); }
         }
       }
       if (!enun) errores.push('Falta el enunciado.');
@@ -1679,7 +1681,7 @@
   function abrirImportar() {
     const m0 = matActual(), t0 = temaActual();
     const d = abrirModal('Pegar JSON del LM', `
-      <label class="campo"><span>Pegá lo que te devolvió el LM (se aceptan bloques de código y texto alrededor)</span>
+      <label class="campo"><span>Pegá el JSON devuelto por el modelo</span>
         <textarea id="imp-texto" rows="8" placeholder='{ "materia": "...", "tema": "...", "preguntas": [ ... ], "tarjetas": [ ... ] }'></textarea></label>
       <p><label class="btn chico" style="cursor:pointer">…o abrir un archivo .json<input type="file" id="imp-archivo" accept=".json,.txt,application/json,text/plain" hidden></label></p>
       <div id="imp-prev"></div>`,
@@ -1733,7 +1735,6 @@
       const etiqueta = { ok: ['ok', 'OK'], rep: ['rep', 'Reparada'], rota: ['rota', 'Con errores'], dup: ['dup', 'Ya existe'] };
       prev.innerHTML = `
         ${res.nota ? `<div class="nota">${esc(res.nota)}</div>` : ''}
-        ${!res.items.length && !res.tarjetas.length && sel.tema === '__nuevo__' ? '<div class="nota mal">Este JSON no trae preguntas ni tarjetas para el tema nuevo.</div>' : ''}
         <p class="nota"><b>${plural(res.items.length, 'pregunta', 'preguntas')}</b> y <b>${plural(res.tarjetas.length, 'tarjeta', 'tarjetas')}</b> en el JSON:
           ${cuenta('ok')} correctas, ${cuenta('rep')} reparadas, ${cuenta('rota')} con errores, ${cuenta('dup')} repetidas.</p>
         <div class="fila">
@@ -1749,10 +1750,10 @@
           ${sel.tema === '__nuevo__' ? `<label class="campo"><span>Nombre del tema nuevo</span><input type="text" id="imp-nt" value="${esc(sel.nombreTema)}"></label>` : ''}
         </div>
         <label class="check"><input type="checkbox" id="imp-omitir" ${omitir ? 'checked' : ''}> Omitir las que ya existen en el tema elegido</label>
-        <label class="check"><input type="checkbox" id="imp-rotas" ${conRotas ? 'checked' : ''}> Importar también las que tienen errores, para corregirlas a mano</label>
+        <label class="check"><input type="checkbox" id="imp-rotas" ${conRotas ? 'checked' : ''}> Importar también las que tienen errores</label>
         <ul class="vista-prev">${res.items.map((it) => `<li><span class="et ${etiqueta[it.estado][0]}">${etiqueta[it.estado][1]}</span>
-          <span>${esc(it.q?.pregunta || '(vacía)')}${[...it.errores, ...it.notas].length ? `<br><small style="color:var(--tenue)">${esc([...it.errores, ...it.notas].join(' '))}</small>` : ''}</span></li>`).join('')}${res.tarjetas.map((x) => `<li><span class="et ${etiqueta[x.estado][0]}">${etiqueta[x.estado][1]}</span>
-          <span>🃏 ${esc(x.c?.frente || '(vacía)')}${x.errores.length ? `<br><small style="color:var(--tenue)">${esc(x.errores.join(' '))}</small>` : ''}</span></li>`).join('')}</ul>`;
+          <span>${esc(it.q?.pregunta || '(vacía)')}</span></li>`).join('')}${res.tarjetas.map((x) => `<li><span class="et ${etiqueta[x.estado][0]}">${etiqueta[x.estado][1]}</span>
+          <span>🃏 ${esc(x.c?.frente || '(vacía)')}</span></li>`).join('')}</ul>`;
       const total = aImportar.length + aImportarT.length;
       ok.disabled = total === 0;
       ok.textContent = total ? `Importar ${total}` : 'Importar';
@@ -1789,31 +1790,27 @@
       cerrarModal();
       seleccionar(m.uid, t.uid);
       refrescar();
-      const partes = [lista.length ? plural(lista.length, 'pregunta', 'preguntas') : '', listaT.length ? plural(listaT.length, 'tarjeta', 'tarjetas') : ''].filter(Boolean);
-      avisar(`Se importaron ${partes.join(' y ')} a “${t.nombre}”`);
+      avisar(`Importación realizada con éxito en “${t.nombre}”`);
     };
     txt.focus();
   }
 
-const PROMPT_TARJETAS = "Sos un tutor experto en técnicas de estudio (recuperación activa y repetición espaciada). Tu tarea es convertir el material que te paso en TARJETAS DE ESTUDIO tipo Anki y devolverlas en un único JSON.\n\nCONTEXTO\n- Materia: [MATERIA]\n- Tema: [TEMA]\n- Cantidad de tarjetas: 25 (si el material no alcanza, hacé menos antes que inventar o repetir)\n\nREGLAS PARA CADA TARJETA\n1. Una sola idea por tarjeta. Si algo tiene varias partes, hacé varias tarjetas, o una tarjeta cuyo dorso sea una lista corta.\n2. \"frente\": una pregunta o consigna concreta, con UNA respuesta clara, que se pueda contestar de memoria. Tiene que entenderse sola, sin depender de otras tarjetas ni del material (\"según el texto\" y \"como vimos antes\" están prohibidos).\n3. \"dorso\": la respuesta directa en 1 a 3 oraciones (máximo 400 caracteres). Primero la respuesta; después, solo si hace falta, una aclaración corta. Si es una enumeración, usá líneas que empiecen con \"• \".\n4. Variá los tipos: definiciones, \"¿por qué?\", diferencias entre dos conceptos, ejemplos, causas y consecuencias, procedimientos. Fechas y autores solo si son centrales.\n5. Basate SOLO en el material. No inventes datos ni agregues contenido que no esté.\n6. Texto plano: sin numeración (\"1.\", \"Tarjeta 1\"), sin markdown (nada de **negritas**, #, tablas), sin HTML y sin emojis. Para un salto de línea usá \\n.\n7. Sin tarjetas repetidas ni casi iguales.\n8. Español rioplatense neutro, claro y sin vueltas.\n\nFORMATO DE SALIDA (obligatorio)\nDevolvé SOLO un bloque de código JSON, sin texto antes ni después, con esta estructura exacta:\n\n{\n  \"materia\": \"[MATERIA]\",\n  \"tema\": \"[TEMA]\",\n  \"tarjetas\": [\n    { \"frente\": \"...\", \"dorso\": \"...\" }\n  ]\n}\n\n- Los nombres de los campos son exactamente \"materia\", \"tema\", \"tarjetas\", \"frente\" y \"dorso\".\n- JSON válido: comillas dobles rectas, sin comas finales y sin comentarios. Las comillas dobles dentro de un texto se escriben \\\".\n\nEJEMPLO (de otra materia, solo para mostrar el estilo)\n{\n  \"materia\": \"Epistemología\",\n  \"tema\": \"Popper\",\n  \"tarjetas\": [\n    {\n      \"frente\": \"¿Qué propone el criterio de falsabilidad de Popper?\",\n      \"dorso\": \"Una teoría es científica si puede ser refutada por la experiencia.\\nNo importa cuántas veces se confirma: importa que pueda fallar.\"\n    },\n    {\n      \"frente\": \"¿En qué se diferencia el método deductivo de Popper del inductivismo?\",\n      \"dorso\": \"Popper no parte de observaciones para generalizar: propone conjeturas y trata de refutarlas con contrastaciones.\"\n    }\n  ]\n}\n\nAntes de responder, revisá una por una que cada tarjeta cumpla las reglas y que el JSON sea válido.\n\nMATERIAL\n\"\"\"\n[PEGAR ACÁ EL TEXTO, LOS APUNTES O EL TEMARIO]\n\"\"\"";
+  const PROMPT_TARJETAS = "Sos un tutor experto en técnicas de estudio. Tu tarea es convertir el material en TARJETAS DE ESTUDIO tipo Anki.\n\nFORMATO DE SALIDA:\n{\n  \"materia\": \"[MATERIA]\",\n  \"tema\": \"[TEMA]\",\n  \"tarjetas\": [\n    { \"frente\": \"...\", \"dorso\": \"...\" }\n  ]\n}";
 
   function abrirPromptTarjetas() {
     const m = matActual(), t = temaActual();
     const texto = PROMPT_TARJETAS.replaceAll('[MATERIA]', m?.nombre || '[MATERIA]').replaceAll('[TEMA]', t?.nombre || '[TEMA]');
-    const d = abrirModal('Prompt para que el LM arme tarjetas', `
-      <p class="nota">Copiá este prompt y pegalo en tu modelo de lenguaje. Reemplazá lo que está entre corchetes en <b>MATERIAL</b> por tus apuntes (y ajustá la cantidad de tarjetas). Después copiá lo que te devuelva y pegalo con <b>“Pegar JSON del LM”</b>.</p>
-      <textarea id="prompt-t" rows="16" readonly>${esc(texto)}</textarea>`,
+    const d = abrirModal('Prompt para tarjetas', `<textarea id="prompt-t" rows="12" readonly>${esc(texto)}</textarea>`,
       '<button class="btn" id="p-cerrar">Cerrar</button><button class="btn primario" id="p-copiar">Copiar prompt</button>');
     $('#p-cerrar', d).onclick = cerrarModal;
     $('#p-copiar', d).onclick = async () => {
       try { await navigator.clipboard.writeText(texto); avisar('Prompt copiado'); }
-      catch { $('#prompt-t', d).select(); avisar('Quedó seleccionado: copialo con Ctrl+C'); }
+      catch { $('#prompt-t', d).select(); avisar('Copiá con Ctrl+C'); }
     };
   }
 
-  // ---------- Buscar y revisar ----------
   function abrirBuscar() {
-    const d = abrirModal('Buscar en todas las preguntas', `<input type="text" id="bus-q" placeholder="Palabra o frase…" aria-label="Buscar"><div id="bus-res" style="margin-top:.8rem"></div>`);
+    const d = abrirModal('Buscar', `<input type="text" id="bus-q" placeholder="Buscar…"><div id="bus-res" style="margin-top:.8rem"></div>`);
     const inp = $('#bus-q', d), res = $('#bus-res', d);
     const pintar = () => {
       const f = norm(inp.value);
@@ -1826,7 +1823,7 @@ const PROMPT_TARJETAS = "Sos un tutor experto en técnicas de estudio (recuperac
         if (hits.length < 60 && norm(`${c.frente} ${c.dorso}`).includes(f)) hits.push({ m, t, q: c, i, tarjeta: true });
       });
       res.innerHTML = hits.length
-        ? hits.map((h) => `<button class="resultado-busqueda" data-m="${h.m.uid}" data-t="${h.t.uid}" data-q="${h.q.uid}">${esc(h.tarjeta ? `🃏 ${h.q.frente || '(sin frente)'}` : (h.q.pregunta || '(sin enunciado)'))}<small>${esc(h.m.nombre)} › ${esc(h.t.nombre)}, ${h.tarjeta ? 'tarjeta' : 'pregunta'} ${h.i + 1}</small></button>`).join('')
+        ? hits.map((h) => `<button class="resultado-busqueda" data-m="${h.m.uid}" data-t="${h.t.uid}" data-q="${h.q.uid}">${esc(h.tarjeta ? `🃏 ${h.q.frente || '(sin frente)'}` : (h.q.pregunta || '(sin enunciado)'))}<small>${esc(h.m.nombre)} › ${esc(h.t.nombre)}</small></button>`).join('')
         : '<p class="pista">Sin resultados.</p>';
       $$('.resultado-busqueda', res).forEach((b) => b.addEventListener('click', () => irA(b.dataset.m, b.dataset.t, b.dataset.q)));
     };
@@ -1840,10 +1837,9 @@ const PROMPT_TARJETAS = "Sos un tutor experto en técnicas de estudio (recuperac
     const { lista, errores, avisos } = E.analisis;
     const ordenada = [...lista].sort((a, b) => (a.nivel === b.nivel ? 0 : a.nivel === 'e' ? -1 : 1));
     const d = abrirModal('Revisar todo', ordenada.length
-      ? `<p class="nota"><b>${plural(errores, 'error', 'errores')}</b> y <b>${plural(avisos, 'aviso', 'avisos')}</b>. Los errores frenan la publicación del sitio; los avisos son recomendaciones.</p>
-        ${ordenada.slice(0, 300).map((p, i) => `<button class="resultado-busqueda" data-i="${i}"><span class="et ${p.nivel === 'e' ? 'rota' : 'rep'}">${p.nivel === 'e' ? 'Error' : 'Aviso'}</span> ${esc(p.texto)}<small>${esc(p.donde)}</small></button>`).join('')}
-        ${ordenada.length > 300 ? `<p class="pista">Se muestran los primeros 300.</p>` : ''}`
-      : '<div class="nota"><b>Todo en orden.</b> No hay errores ni avisos.</div>');
+      ? `<p class="nota"><b>${plural(errores, 'error', 'errores')}</b> y <b>${plural(avisos, 'aviso', 'avisos')}</b>.</p>
+        ${ordenada.slice(0, 300).map((p, i) => `<button class="resultado-busqueda" data-i="${i}"><span class="et ${p.nivel === 'e' ? 'rota' : 'rep'}">${p.nivel === 'e' ? 'Error' : 'Aviso'}</span> ${esc(p.texto)}<small>${esc(p.donde)}</small></button>`).join('')}`
+      : '<div class="nota"><b>Todo en orden.</b></div>');
     $$('.resultado-busqueda', d).forEach((b) => b.addEventListener('click', () => {
       const p = ordenada[Number(b.dataset.i)];
       irA(p.m, p.t, p.q);
@@ -1868,12 +1864,6 @@ const PROMPT_TARJETAS = "Sos un tutor experto en técnicas de estudio (recuperac
     for (const n of plan.imagenes) {
       archivos.push({ nombre: `data/img/${n}`, bytes: new Uint8Array(await E.imgs.get(n).arrayBuffer()) });
     }
-    if (plan.borrados.length) {
-      archivos.push({
-        nombre: 'ARCHIVOS_PARA_BORRAR.txt',
-        texto: `Borrá estos archivos del repo (el ZIP no puede borrar por vos):\n\n${plan.borrados.map((r) => `data/${r}`).join('\n')}\n`,
-      });
-    }
     return archivos;
   }
 
@@ -1882,35 +1872,24 @@ const PROMPT_TARJETAS = "Sos un tutor experto en técnicas de estudio (recuperac
     const plan = calcularPlan();
     E.plan = plan;
     const n = cantidadCambios(plan);
-    const errores = E.analisis.errores, avisos = E.analisis.avisos;
-    const lista = (titulo, arr) => (arr.length
-      ? `<details class="lista"><summary>${titulo} (${arr.length})</summary><ul>${arr.map((r) => `<li>data/${esc(r)}</li>`).join('')}</ul></details>` : '');
-    const hayAlgo = n > 0 || plan.indiceCambio;
+    const errores = E.analisis.errores;
 
     const d = abrirModal('Guardar cambios', `
       <div class="resumen-plan">
         <div class="nuevo"><b>${plan.nuevos.length}</b>nuevos</div>
         <div class="mod"><b>${plan.modificados.length}</b>modificados</div>
         <div class="borr"><b>${plan.borrados.length}</b>a borrar</div>
-        <div><b>${plan.iguales.length}</b>sin cambios</div>
       </div>
-      ${errores ? `<div class="nota mal"><b>Hay ${plural(errores, 'error', 'errores')}.</b> Si los subís así, el workflow del repo se frena y el sitio no se publica.
-        <button class="btn chico" id="g-ver">Verlos</button>
-        <label class="check"><input type="checkbox" id="g-igual"> Guardar igual de todos modos</label></div>` : ''}
-      ${!errores && avisos ? `<div class="nota">Hay ${plural(avisos, 'aviso', 'avisos')} (recomendaciones, no frenan nada). <button class="btn chico" id="g-ver">Verlos</button></div>` : ''}
-      ${lista('Archivos nuevos', plan.nuevos)}${lista('Archivos modificados', plan.modificados)}${lista('Imágenes nuevas', plan.imagenes.map((n) => `img/${n}`))}${lista('Archivos que hay que borrar', plan.borrados)}
-      <div class="nota"><b>Cómo usarlo:</b> ${TIENE_API_CARPETAS ? '“Escribir en la carpeta” guarda directo en tu repo. ' : ''}Con el ZIP, descomprimilo y copiá la carpeta <b>data</b> dentro del repo, pisando la existente.${plan.imagenes.length ? ' Las imágenes van en <b>data/img</b>: combiná las carpetas y no borres las imágenes que ya estaban.' : ''} Después hacé <code>git add . &amp;&amp; git commit &amp;&amp; git push</code>.</div>
+      ${errores ? `<div class="nota mal"><b>Hay ${plural(errores, 'error', 'errores')}.</b> <button class="btn chico" id="g-ver">Verlos</button> <label class="check"><input type="checkbox" id="g-igual"> Guardar de todos modos</label></div>` : ''}
       <div id="g-estado"></div>`,
-      `${TIENE_API_CARPETAS ? `<button class="btn primario" id="g-escribir">${E.handle ? 'Escribir en la carpeta abierta' : 'Elegir carpeta y escribir'}</button>` : ''}
-       <button class="btn ${TIENE_API_CARPETAS ? '' : 'primario'}" id="g-zip">Descargar ZIP de data/</button>
-       <button class="btn" id="g-zip-c">Solo lo que cambió (ZIP)</button>
+      `${TIENE_API_CARPETAS ? `<button class="btn primario" id="g-escribir">${E.handle ? 'Escribir en la carpeta' : 'Elegir carpeta y escribir'}</button>` : ''}
+       <button class="btn ${TIENE_API_CARPETAS ? '' : 'primario'}" id="g-zip">Descargar ZIP</button>
        <button class="btn fantasma" id="g-cerrar">Cerrar</button>`);
 
-    const botones = $$('#g-escribir, #g-zip, #g-zip-c', d);
+    const botones = $$('#g-escribir, #g-zip', d);
     const bloqueo = () => {
       const bloqueado = errores > 0 && !$('#g-igual', d)?.checked;
       botones.forEach((b) => { b.disabled = bloqueado; });
-      if (!hayAlgo) { $('#g-escribir', d) && ($('#g-escribir', d).disabled = true); $('#g-zip-c', d).disabled = true; }
     };
     bloqueo();
     $('#g-igual', d)?.addEventListener('change', bloqueo);
@@ -1918,69 +1897,53 @@ const PROMPT_TARJETAS = "Sos un tutor experto en técnicas de estudio (recuperac
     $('#g-cerrar', d).onclick = cerrarModal;
 
     $('#g-zip', d).onclick = () => descargarZip(plan, false, d);
-    $('#g-zip-c', d).onclick = () => descargarZip(plan, true, d);
     const esc_ = $('#g-escribir', d);
     if (esc_) esc_.onclick = async () => {
       try {
         if (!E.handle) await elegirCarpetaEscritura();
-        if (!(await asegurarPermiso(E.handle))) { avisar('Sin permiso para escribir en la carpeta.'); return; }
+        if (!(await asegurarPermiso(E.handle))) { avisar('Sin permiso de escritura.'); return; }
         const p = calcularPlan();
-        for (const n of p.imagenes) {
-          await escribirArchivo(E.handle, `img/${n}`, E.imgs.get(n));
-          E.imgExistentes.add(n);
-          E.imgNuevas.delete(n);
-        }
+        for (const n of p.imagenes) await escribirArchivo(E.handle, `img/${n}`, E.imgs.get(n));
         for (const r of [...p.nuevos, ...p.modificados]) await escribirArchivo(E.handle, r, p.destino.get(r));
         for (const r of p.borrados) await borrarArchivo(E.handle, r);
         if (p.indiceCambio || cantidadCambios(p) > 0 || !E.base.archivos.size) await escribirArchivo(E.handle, 'index.json', textoIndice(p.indiceNuevo));
         fijarBase(p.destino, p.destino);
         refrescar();
-        $('#g-estado', d).innerHTML = `<div class="nota"><b>Listo.</b> Se escribieron ${plural(p.nuevos.length + p.modificados.length, 'archivo', 'archivos')}${p.imagenes.length ? ` (más ${plural(p.imagenes.length, 'imagen', 'imágenes')})` : ''} y se borraron ${p.borrados.length} en la carpeta “${esc(E.handle.name)}”.
-          Ahora podés hacer <code>git add . &amp;&amp; git commit &amp;&amp; git push</code>.</div>`;
-        botones.forEach((b) => { b.disabled = true; });
-        avisar('Cambios guardados en la carpeta');
+        cerrarModal();
+        avisar('Cambios guardados correctamente');
       } catch (e) {
         if (e.name === 'AbortError') return;
         console.error(e);
-        $('#g-estado', d).innerHTML = `<div class="nota mal"><b>No se pudo escribir:</b> ${esc(e.message)}. Probá con el ZIP.</div>`;
+        $('#g-estado', d).innerHTML = `<div class="nota mal">Error: ${esc(e.message)}</div>`;
       }
     };
   }
 
   async function descargarZip(plan, soloCambios, d) {
     const archivos = await archivosParaZip(plan, soloCambios);
-    descargar(`repaso-data-${marcaTiempo()}${soloCambios ? '-cambios' : ''}.zip`, crearZip(archivos));
-    $('#g-estado', d).innerHTML = `<div class="nota"><b>ZIP descargado</b> (${plural(archivos.length, 'archivo', 'archivos')}).
-      Copiá la carpeta <b>data</b> al repo${plan.borrados.length ? ' y borrá lo que indica ARCHIVOS_PARA_BORRAR.txt' : ''}.
-      <br><button class="btn chico" id="g-marcar" style="margin-top:.5rem">Ya lo copié al repo: marcar como guardado</button></div>`;
-    $('#g-marcar', d).onclick = () => {
-      plan.imagenes.forEach((n) => { E.imgExistentes.add(n); E.imgNuevas.delete(n); });
-      fijarBase(plan.destino, plan.destino);
-      refrescar();
-      cerrarModal();
-      avisar('Marcado como guardado');
-    };
+    descargar(`repaso-data-${marcaTiempo()}.zip`, crearZip(archivos));
+    fijarBase(plan.destino, plan.destino);
+    refrescar();
+    cerrarModal();
+    avisar('ZIP generado');
   }
 
-  // ---------- Conexión de la barra y arranque ----------
-  $('#btn-abrir').addEventListener('click', abrirCarpeta);
-  $('#btn-importar').addEventListener('click', abrirImportar);
-  $('#btn-buscar').addEventListener('click', abrirBuscar);
-  $('#btn-revisar').addEventListener('click', abrirRevisar);
-  $('#btn-guardar').addEventListener('click', abrirGuardar);
-  $('#in-carpeta').addEventListener('change', async (e) => {
+  // ---------- Conexión inicial ----------
+  $('#btn-abrir')?.addEventListener('click', abrirCarpeta);
+  $('#btn-importar')?.addEventListener('click', abrirImportar);
+  $('#btn-buscar')?.addEventListener('click', abrirBuscar);
+  $('#btn-revisar')?.addEventListener('click', abrirRevisar);
+  $('#btn-guardar')?.addEventListener('click', abrirGuardar);
+  $('#in-carpeta')?.addEventListener('change', async (e) => {
     const files = [...e.target.files];
     e.target.value = '';
     if (!files.length) return;
     const mapa = await leerDesdeInput(files);
-    if (![...mapa.keys()].some((k) => k.includes('/'))) { avisar('No encontré una carpeta data/ con archivos .json en lo que elegiste.'); return; }
     E.handle = null;
     leerImagenesDesdeInput(files);
     cargarArchivos(mapa);
     despuesDeCargar(mapa);
   });
-
-  if (!TIENE_API_CARPETAS) $('#btn-abrir').textContent = 'Cargar carpeta del repo';
 
   fijarBase(new Map(), new Map());
   pintarTodo();
