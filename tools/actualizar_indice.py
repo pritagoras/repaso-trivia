@@ -61,7 +61,6 @@ def main() -> int:
         print("\nNo se generó el índice: corregí los errores de arriba.")
         return 1
 
-    # Orden de materias: campo "orden" de _materia.json (si existe) y luego nombre de carpeta
     metas = {c: leer_meta_materia(c) for c in por_materia}
 
     def clave_orden(carpeta):
@@ -83,14 +82,17 @@ def main() -> int:
         materia["temas"] = []
 
         for ruta, datos, n in temas_archivo:
-            materia["temas"].append(
-                {
-                    "id": f"{carpeta.name}/{ruta.stem}",
-                    "nombre": datos["tema"],
-                    "archivo": ruta.relative_to(RAIZ).as_posix(),
-                    "preguntas": n,
-                }
-            )
+            n_tarjetas = len(datos.get("tarjetas", [])) if isinstance(datos.get("tarjetas"), list) else 0
+            item = {
+                "id": f"{carpeta.name}/{ruta.stem}",
+                "nombre": datos["tema"],
+                "archivo": ruta.relative_to(RAIZ).as_posix(),
+                "preguntas": n,
+            }
+            if n_tarjetas > 0:
+                item["tarjetas"] = n_tarjetas
+            materia["temas"].append(item)
+
         materias.append(materia)
 
     indice = {
@@ -102,7 +104,10 @@ def main() -> int:
 
     total_temas = sum(len(m["temas"]) for m in materias)
     total_preg = sum(t["preguntas"] for m in materias for t in m["temas"])
-    print(f"Listo: {len(materias)} materias, {total_temas} temas, {total_preg} preguntas -> {destino.relative_to(RAIZ)}")
+    total_tarj = sum(t.get("tarjetas", 0) for m in materias for t in m["temas"])
+    print(
+        f"Listo: {len(materias)} materias, {total_temas} temas, {total_preg} preguntas, {total_tarj} tarjetas -> {destino.relative_to(RAIZ)}"
+    )
     return 0
 
 

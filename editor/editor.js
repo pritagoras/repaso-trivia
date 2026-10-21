@@ -12,9 +12,8 @@
 
 (() => {
   // ---------- Utilidades ----------
-  const $ = (s, r = document) => r.querySelector(s);
-  const $$ = (s, r = document) => [...r.querySelectorAll(s)];
-  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const $ = (s, r = document) => r.querySelector(s); const $\$ = (s, r = document) => [...r.querySelectorAll(s)];
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&#39;' }[c]));
   const norm = (s) => String(s ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
   const LETRAS = ['A', 'B', 'C', 'D'];
   const EMOJIS = ['📚', '🧬', '🔬', '🧪', '⚗️', '🧠', '🫀', '🦴', '💊', '🌱', '🌍', '📜', '⚖️', '🏛️', '💻', '📐', '➗', '📊', '💰', '🗣️', '🎨', '🎵', '⚽', '🩺'];
@@ -27,7 +26,7 @@
 
   const slug = (s) =>
     String(s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'sin-nombre';
+      .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+\$/g, '') || 'sin-nombre';
 
   const mezclar = (lista) => {
     const a = [...lista];
@@ -40,7 +39,7 @@
 
   let _temporizadorAviso = null;
   function avisar(texto) {
-    const el = $('#aviso');
+    const el = \$('#aviso');
     el.textContent = texto;
     el.classList.add('visible');
     clearTimeout(_temporizadorAviso);
@@ -107,9 +106,8 @@
     });
   }
 
-  // "data/img/archivo.webp" -> "archivo.webp" (null si no apunta a data/img/)
   const nombreImagen = (ruta) => {
-    const m = /^data\/img\/([\w.%-]+)$/.exec(String(ruta || '').trim());
+    const m = /^data\/img\/([\w.%-]+)\$/.exec(String(ruta || '').trim());
     return m ? m[1] : null;
   };
 
@@ -132,7 +130,7 @@
     else if (REF_LETRA.test(q.explicacion)) avisos.push('La explicación menciona una letra de opción; el juego mezcla el orden.');
     if (norm(q.imagen)) {
       const n = nombreImagen(q.imagen);
-      if (!n && !/^https:\/\/\S+$/i.test(q.imagen.trim())) avisos.push('La ruta de la imagen no es válida: el juego no la va a mostrar (tiene que ser data/img/... o https://...).');
+      if (!n && !/^https:\/\/\S+\$/i.test(q.imagen.trim())) avisos.push('La ruta de la imagen no es válida: el juego no la va a mostrar (tiene que ser data/img/... o https://...).');
       else if (n && E.imgListadoOk && !E.imgExistentes.has(n) && !E.imgs.has(n)) avisos.push(`La imagen "${n}" no está en data/img/.`);
       if (!norm(q.imagenAlt)) avisos.push('La imagen no tiene descripción (sirve para accesibilidad).');
     }
@@ -169,7 +167,9 @@
       carpetas.set(m.carpeta, true);
       m.temas.forEach((t) => {
         if (!norm(t.nombre)) reg('e', m, t, null, 'El tema no tiene nombre.');
-        if (!t.preguntas.length) reg('e', m, t, null, 'El tema no tiene preguntas.');
+        if (!t.preguntas.length && (!t.tarjetas || !t.tarjetas.length)) {
+          reg('e', m, t, null, 'El tema debe contener al menos una pregunta o una tarjeta.');
+        }
         const vistas = new Map();
         t.preguntas.forEach((q, i) => {
           const r = validarPregunta(q);
@@ -208,7 +208,7 @@
     const enLinea = `[${lineasOps.join(', ')}]`;
     const ops = enLinea.length <= 120
       ? enLinea
-      : `[\n${lineasOps.map((l) => `${sangria}  ${l}`).join(',\n')}\n${sangria}]`;
+      : `[\n${lineasOps.map((l) => `${sangria}${l}`).join(',\n')}\n${sangria}]`;
     const campos = [
       `${sangria}"pregunta": ${J(q.pregunta)}`,
       `${sangria}"opciones": ${ops}`,
@@ -236,7 +236,6 @@
     return `{\n${campos.join(',\n')}\n}\n`;
   }
 
-  // "orden" se escribe solo si el archivo ya lo tenía o si cambió el orden/conjunto de materias
   function serializarMeta(m, forzar) {
     const o = { nombre: m.nombre, emoji: m.emoji };
     if (m.color) o.color = m.color;
@@ -245,7 +244,6 @@
     return JSON.stringify(o, null, 2) + '\n';
   }
 
-  // El juego ignora el orden si no hay _materia.json con "orden"
   const metaNecesaria = (m, forzar) =>
     forzar || m.tieneMeta || m.emoji !== '📚' || !!m.color || norm(m.nombre) !== norm(m.nombreBase);
 
@@ -253,7 +251,6 @@
     return `${String(i + 1).padStart(2, '0')}-${t.parte}.json`;
   }
 
-  // Asegura que cada tema tenga un "parte" de nombre único dentro de su materia
   function normalizarPartes(m) {
     const usadas = new Set();
     m.temas.forEach((t) => {
@@ -272,14 +269,20 @@
         if (m.color) o.color = m.color;
         o.temas = m.temas.map((t, i) => {
           const archivo = nombreArchivo(t, i);
-          return { id: `${m.carpeta}/${archivo.replace(/\.json$/, '')}`, nombre: t.nombre, archivo: `data/${m.carpeta}/${archivo}`, preguntas: t.preguntas.length };
+          const item = {
+            id: `${m.carpeta}/${archivo.replace(/\.json$/, '')}`,
+            nombre: t.nombre,
+            archivo: `data/${m.carpeta}/${archivo}`,
+            preguntas: t.preguntas.length,
+          };
+          if (t.tarjetas?.length) item.tarjetas = t.tarjetas.length;
+          return item;
         });
         return o;
       }),
     };
   }
 
-  // Mapa ruta (relativa a data/) -> texto, con todo lo que el editor administra
   function construirDestino() {
     const destino = new Map();
     const secuencia = E.materias.map((m) => m.carpeta).join('|');
@@ -304,7 +307,6 @@
     }
     for (const ruta of E.base.archivos.keys()) if (!destino.has(ruta)) plan.borrados.push(ruta);
     plan.indiceCambio = JSON.stringify(indiceNuevo.materias) !== E.base.indice;
-    // Imágenes nuevas que alguna pregunta usa de verdad (las que se descartaron no se escriben)
     const usadas = new Set();
     E.materias.forEach((m) => m.temas.forEach((t) => t.preguntas.forEach((q) => { const n = nombreImagen(q.imagen); if (n) usadas.add(n); })));
     plan.imagenes = [...E.imgNuevas].filter((n) => usadas.has(n) && E.imgs.has(n));
@@ -321,7 +323,6 @@
     });
   }
 
-  // Congela como "lo que está en el repo" el conjunto de archivos indicado
   function fijarBase(archivos, crudos) {
     E.base.archivos = new Map(archivos);
     E.base.crudos = new Map(crudos);
@@ -369,7 +370,7 @@
       partes.push(new Uint8Array(loc.buffer), nombre, datos);
       const cen = new DataView(new ArrayBuffer(46));
       cen.setUint32(0, 0x02014b50, true); cen.setUint16(4, 20, true); cen.setUint16(6, 20, true); cen.setUint16(8, 0x0800, true); cen.setUint16(10, 0, true);
-      cen.setUint16(12, hora, true); cen.setUint16(14, fecha, true); cen.setUint32(16, crc, true);
+      cen.setUint16(12, hora, true); cen.setUint14(14, fecha, true); cen.setUint32(16, crc, true);
       cen.setUint32(20, datos.length, true); cen.setUint32(24, datos.length, true); cen.setUint16(28, nombre.length, true);
       cen.setUint32(42, offset, true);
       central.push(new Uint8Array(cen.buffer), nombre);
@@ -399,7 +400,6 @@
   };
 
   // ---------- Carga de archivos ----------
-  // mapa: ruta relativa a data/ ("materia/01-tema.json") -> texto
   function cargarArchivos(mapa) {
     const grupos = new Map();
     const problemas = [], avisos = [], gestionados = [];
@@ -424,24 +424,26 @@
       for (const f of g.temas) {
         let datos;
         try { datos = JSON.parse(f.texto); } catch (e) { problemas.push(`${f.ruta}: JSON inválido (${e.message}). No se tocó.`); continue; }
-        if (!datos || typeof datos !== 'object' || !Array.isArray(datos.preguntas)) {
-          problemas.push(`${f.ruta}: no tiene una lista "preguntas". No se tocó.`);
+        if (!datos || typeof datos !== 'object') {
+          problemas.push(`${f.ruta}: formato inválido. No se tocó.`);
           continue;
         }
         gestionados.push(f.ruta);
         const { materia, tema, preguntas, tarjetas, ...extra } = datos;
         const qs = [];
-        preguntas.forEach((p, i) => {
-          if (!p || typeof p !== 'object') { avisos.push(`${f.ruta}: la pregunta ${i + 1} no es un objeto; se omitió.`); return; }
-          qs.push(preguntaDesdeJSON(p, avisos, `${f.ruta}, pregunta ${i + 1}`));
-        });
+        if (Array.isArray(preguntas)) {
+          preguntas.forEach((p, i) => {
+            if (!p || typeof p !== 'object') { avisos.push(`${f.ruta}: la pregunta ${i + 1} no es un objeto; se omitió.`); return; }
+            qs.push(preguntaDesdeJSON(p, avisos, `${f.ruta}, pregunta ${i + 1}`));
+          });
+        }
         const ts = [];
         if (Array.isArray(tarjetas)) {
           tarjetas.forEach((c, i) => {
             if (!c || typeof c !== 'object') { avisos.push(`${f.ruta}: la tarjeta ${i + 1} no es un objeto; se omitió.`); return; }
             ts.push(tarjetaDesdeJSON(c));
           });
-        } else if (tarjetas !== undefined) extra.tarjetas = tarjetas;   // formato raro: se conserva tal cual
+        } else if (tarjetas !== undefined) extra.tarjetas = tarjetas;
         const parte = f.archivo.replace(/\.json$/i, '').replace(/^\d+[-_ ]*/, '');
         temas.push(nuevoTema({ nombre: String(tema ?? ''), parte: slug(parte), extra, preguntas: qs, tarjetas: ts, materiaCampo: String(materia ?? '') }));
       }
@@ -465,27 +467,22 @@
     E.filtro = '';
     E.avisosCarga = [...problemas, ...avisos];
 
-    // Lo que acaba de leerse es, por definición, lo que hay en el repo.
-    // Solo cuentan como "existentes" los archivos que realmente estaban en disco.
     E.base.secuencia = materias.map((m) => m.carpeta).join('|');
     const destino = construirDestino();
     const existentes = new Map();
     for (const [ruta, texto] of destino) if (mapa.has(ruta)) existentes.set(ruta, texto);
-    // Archivos leídos que el editor va a reemplazar por otro nombre: figuran como "a borrar"
     for (const ruta of gestionados) if (!destino.has(ruta)) existentes.set(ruta, mapa.get(ruta));
     const crudos = new Map();
     for (const ruta of existentes.keys()) crudos.set(ruta, mapa.get(ruta));
     fijarBase(existentes, crudos);
-    // El índice original se compara ignorando "generado"
     try {
       const idx = JSON.parse(mapa.get('index.json') || 'null');
       if (idx && Array.isArray(idx.materias)) E.base.indice = JSON.stringify(idx.materias);
-    } catch { /* se regenera igual */ }
+    } catch { }
   }
 
-  // Elige la carpeta data/ a partir de lo que el usuario seleccionó
   async function resolverDataDir(handle) {
-    try { return await handle.getDirectoryHandle('data'); } catch { /* no hay subcarpeta data */ }
+    try { return await handle.getDirectoryHandle('data'); } catch { }
     if (handle.name === 'data') return handle;
     if (window.confirm(`No encontré la carpeta "data" dentro de "${handle.name}".\n\n¿Querés que la cree ahí? (Cancelar = usar "${handle.name}" como si fuera data)`)) {
       return handle.getDirectoryHandle('data', { create: true });
@@ -524,7 +521,7 @@
   }
 
   // ---------- Imágenes de las preguntas (data/img/) ----------
-  const MAX_LADO = 1200;   // px del lado más largo: alcanza para estudiar y pesa poco
+  const MAX_LADO = 1200;
 
   function reiniciarImagenes(listadoOk = false, existentes = new Set(), blobs = new Map()) {
     E.imgListadoOk = listadoOk;
@@ -538,7 +535,7 @@
     try {
       const d = await dataDir.getDirectoryHandle('img');
       for await (const [n, h] of d.entries()) if (h.kind === 'file') nombres.add(n);
-    } catch { /* todavía no hay carpeta img */ }
+    } catch { }
     return nombres;
   }
 
@@ -553,15 +550,13 @@
     reiniciarImagenes(true, nombres, blobs);
   }
 
-  // Pasa el lienzo ya recortado a WebP (o JPEG si el navegador no lo soporta).
-  // El nombre sale del contenido: la misma imagen siempre tiene el mismo nombre y no se duplica.
   async function codificarImagen(lienzo) {
     let blob = await new Promise((ok) => lienzo.toBlob(ok, 'image/webp', 0.85));
     if (!blob || blob.type !== 'image/webp') {
       const c = document.createElement('canvas');
       c.width = lienzo.width; c.height = lienzo.height;
       const x = c.getContext('2d');
-      x.fillStyle = '#fff'; x.fillRect(0, 0, c.width, c.height);   // JPEG no tiene transparencia
+      x.fillStyle = '#fff'; x.fillRect(0, 0, c.width, c.height);
       x.drawImage(lienzo, 0, 0);
       blob = await new Promise((ok) => c.toBlob(ok, 'image/jpeg', 0.88));
     }
@@ -573,9 +568,8 @@
   }
 
   // ---------- Recorte de la imagen antes de usarla ----------
-  const LIMITE_BASE = 4096;   // las fotos enormes se achican un poco antes de editarlas (cuidan la memoria)
+  const LIMITE_BASE = 4096;
 
-  // Abre el recortador. Devuelve un <canvas> con el resultado final (ya a tamaño de salida) o null si se cancela.
   async function abrirRecorte(archivo) {
     const bmp = await createImageBitmap(archivo);
     let base = document.createElement('canvas');
@@ -608,9 +602,9 @@
       const CURSOR = { n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize', nw: 'nwse-resize', se: 'nwse-resize', ne: 'nesw-resize', sw: 'nesw-resize' };
       const dpr = window.devicePixelRatio || 1;
       const limitar = (v, a, b) => Math.min(Math.max(v, a), b);
-      let dw = 0, dh = 0;            // tamaño del lienzo en pantalla
-      let rect = null;               // recuadro de recorte, en coordenadas de pantalla
-      let ratio = null;              // proporción fija (ancho/alto) o null si es libre
+      let dw = 0, dh = 0;
+      let rect = null;
+      let ratio = null;
       let arrastre = null;
       let aceptado = false;
 
@@ -625,13 +619,13 @@
       }
 
       const rectCompleto = () => ({ x: 0, y: 0, w: dw, h: dh });
-      function rectRatio(r) {   // el recuadro más grande de esa proporción, centrado
+      function rectRatio(r) {
         let w, h;
         if (dw / dh > r) { h = dh; w = dh * r; } else { w = dw; h = dw / r; }
         return { x: (dw - w) / 2, y: (dh - h) / 2, w, h };
       }
 
-      function asas() {   // con proporción fija solo se usan las esquinas
+      function asas() {
         const { x, y, w, h } = rect;
         const lista = [['nw', x, y], ['ne', x + w, y], ['sw', x, y + h], ['se', x + w, y + h]];
         if (!ratio) lista.push(['n', x + w / 2, y], ['s', x + w / 2, y + h], ['w', x, y + h / 2], ['e', x + w, y + h / 2]);
@@ -644,7 +638,6 @@
       const asaEn = (p) => (asas().find(([, ax, ay]) => Math.abs(p.x - ax) <= ASA && Math.abs(p.y - ay) <= ASA) || [])[0] || null;
       const dentro = (p) => p.x >= rect.x && p.x <= rect.x + rect.w && p.y >= rect.y && p.y <= rect.y + rect.h;
 
-      // Recuadro que crece desde un punto fijo (ax, ay) hacia la dirección (sx, sy)
       function desdeAncla(ax, ay, sx, sy, dx, dy) {
         const maxW = sx > 0 ? dw - ax : ax, maxH = sy > 0 ? dh - ay : ay;
         let w = dx, h = dy;
@@ -659,9 +652,9 @@
       function dibujar() {
         ctx.clearRect(0, 0, dw, dh);
         ctx.drawImage(base, 0, 0, dw, dh);
-        ctx.fillStyle = 'rgba(10, 5, 25, .62)';   // oscurece lo que queda afuera
+        ctx.fillStyle = 'rgba(10, 5, 25, .62)';
         ctx.beginPath(); ctx.rect(0, 0, dw, dh); ctx.rect(rect.x, rect.y, rect.w, rect.h); ctx.fill('evenodd');
-        ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(255, 243, 220, .35)';   // regla de tercios
+        ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(255, 243, 220, .35)';
         ctx.beginPath();
         for (let i = 1; i < 3; i++) {
           ctx.moveTo(rect.x + rect.w * i / 3, rect.y); ctx.lineTo(rect.x + rect.w * i / 3, rect.y + rect.h);
@@ -673,7 +666,6 @@
         for (const [, ax, ay] of asas()) { ctx.fillStyle = '#9B7BFF'; ctx.fillRect(ax - 6, ay - 6, 12, 12); ctx.strokeRect(ax - 6, ay - 6, 12, 12); }
       }
 
-      // Lo que realmente se va a guardar: el recorte, a lo sumo MAX_LADO px del lado más largo
       function lienzoSalida() {
         const kx = base.width / dw, ky = base.height / dh;
         const sx = rect.x * kx, sy = rect.y * ky, sw = rect.w * kx, sh = rect.h * ky;
@@ -723,11 +715,11 @@
           rect = { ...rect, x: limitar(p.x - arrastre.dx, 0, dw - rect.w), y: limitar(p.y - arrastre.dy, 0, dh - rect.h) };
         } else if (arrastre.modo === 'asa') {
           const { a, r0 } = arrastre;
-          if (a.length === 2) {   // esquina: el punto opuesto queda fijo
+          if (a.length === 2) {
             const sx = a.includes('w') ? -1 : 1, sy = a.includes('n') ? -1 : 1;
             const ax = sx > 0 ? r0.x : r0.x + r0.w, ay = sy > 0 ? r0.y : r0.y + r0.h;
             rect = desdeAncla(ax, ay, sx, sy, Math.max(MIN, (p.x - ax) * sx), Math.max(MIN, (p.y - ay) * sy));
-          } else {                // borde (solo en modo libre)
+          } else {
             let x1 = r0.x, y1 = r0.y, x2 = r0.x + r0.w, y2 = r0.y + r0.h;
             if (a === 'w') x1 = Math.min(p.x, x2 - MIN);
             if (a === 'e') x2 = Math.max(p.x, x1 + MIN);
@@ -735,7 +727,7 @@
             if (a === 's') y2 = Math.max(p.y, y1 + MIN);
             rect = { x: x1, y: y1, w: x2 - x1, h: y2 - y1 };
           }
-        } else {                  // recuadro nuevo (solo si realmente se arrastró)
+        } else {
           if (!arrastre.activo && Math.hypot(p.x - arrastre.ax, p.y - arrastre.ay) < 6) return;
           arrastre.activo = true;
           const sx = p.x >= arrastre.ax ? 1 : -1, sy = p.y >= arrastre.ay ? 1 : -1;
@@ -782,7 +774,7 @@
     });
   }
 
-  const urlsImagen = new Map();   // nombre -> URL temporal para la vista previa
+  const urlsImagen = new Map();
   async function urlDeImagen(nombre) {
     if (urlsImagen.has(nombre)) return urlsImagen.get(nombre);
     let blob = E.imgs.get(nombre) || null;
@@ -802,7 +794,6 @@
     return d;
   }
 
-  // contenido: texto o Blob (las imágenes)
   async function escribirArchivo(raiz, ruta, contenido) {
     const partes = ruta.split('/');
     const nombre = partes.pop();
@@ -819,10 +810,10 @@
     try {
       const dir = await dirDe(raiz, partes, false);
       await dir.removeEntry(nombre);
-      if (partes.length) { // si la carpeta quedó vacía, se borra
-        try { const padre = await dirDe(raiz, partes.slice(0, -1), false); await padre.removeEntry(partes[partes.length - 1]); } catch { /* no estaba vacía */ }
+      if (partes.length) {
+        try { const padre = await dirDe(raiz, partes.slice(0, -1), false); await padre.removeEntry(partes[partes.length - 1]); } catch { }
       }
-    } catch { /* ya no existía */ }
+    } catch { }
   }
 
   async function elegirCarpetaEscritura() {
@@ -894,10 +885,9 @@
         materias: E.materias,
         base: { archivos: [...E.base.archivos], crudos: [...E.base.crudos], secuencia: E.base.secuencia, indice: E.base.indice },
       }));
-    } catch { /* sin espacio o bloqueado: no pasa nada */ }
+    } catch { }
   }
   const guardarBorrador = debounce(escribirBorrador, 500);
-  // Al cerrar, recargar o cambiar de pestaña se guarda enseguida, sin esperar al retardo
   window.addEventListener('pagehide', escribirBorrador);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') escribirBorrador(); });
 
@@ -930,7 +920,7 @@
       const conImagenes = E.materias.some((m) => m.temas.some((t) => t.preguntas.some((q) => nombreImagen(q.imagen))));
       avisar(conImagenes ? 'Borrador restaurado. Si habías cargado imágenes nuevas sin guardar, volvé a elegirlas.' : 'Borrador restaurado');
     };
-    $('#bn-desc').onclick = () => { try { localStorage.removeItem(CLAVE_BORRADOR); } catch { /* nada */ } b.hidden = true; };
+    $('#bn-desc').onclick = () => { try { localStorage.removeItem(CLAVE_BORRADOR); } catch { } b.hidden = true; };
   }
 
   window.addEventListener('beforeunload', (e) => {
@@ -1196,7 +1186,6 @@
       : `<div class="vacia">${t.preguntas.length ? 'Ninguna pregunta coincide con el filtro.' : 'Este tema todavía no tiene preguntas. Usá “+ Pregunta” o “Pegar JSON del LM”.'}</div>`;
   }
 
-  // Actualiza lo que cambia mientras se escribe, sin tocar los campos (no pierde el foco)
   function refrescarTarjetas() {
     const t = temaActual();
     if (!t) return;
@@ -1281,7 +1270,7 @@
     if (!archivo || !q) return;
     try {
       const recortada = await abrirRecorte(archivo);
-      if (!recortada) return;   // canceló el recorte
+      if (!recortada) return;
       const { blob, nombre } = await codificarImagen(recortada);
       E.imgs.set(nombre, blob);
       if (!E.imgExistentes.has(nombre)) E.imgNuevas.add(nombre);
@@ -1295,7 +1284,6 @@
     }
   }
 
-  // Las vistas previas se completan solas cuando aparece una <img data-img> en pantalla
   function hidratarImagenes() {
     $$('#principal img[data-img]:not([data-listo])').forEach(async (img) => {
       img.dataset.listo = '1';
@@ -1745,7 +1733,7 @@
       const etiqueta = { ok: ['ok', 'OK'], rep: ['rep', 'Reparada'], rota: ['rota', 'Con errores'], dup: ['dup', 'Ya existe'] };
       prev.innerHTML = `
         ${res.nota ? `<div class="nota">${esc(res.nota)}</div>` : ''}
-        ${!res.items.length && sel.tema === '__nuevo__' ? '<div class="nota mal">Este JSON solo trae tarjetas. Un tema nuevo quedaría sin preguntas, y el sitio pide al menos una por tema: elegí un tema que ya tenga preguntas, o agregale una después.</div>' : ''}
+        ${!res.items.length && !res.tarjetas.length && sel.tema === '__nuevo__' ? '<div class="nota mal">Este JSON no trae preguntas ni tarjetas para el tema nuevo.</div>' : ''}
         <p class="nota"><b>${plural(res.items.length, 'pregunta', 'preguntas')}</b> y <b>${plural(res.tarjetas.length, 'tarjeta', 'tarjetas')}</b> en el JSON:
           ${cuenta('ok')} correctas, ${cuenta('rep')} reparadas, ${cuenta('rota')} con errores, ${cuenta('dup')} repetidas.</p>
         <div class="fila">
@@ -1937,7 +1925,7 @@ const PROMPT_TARJETAS = "Sos un tutor experto en técnicas de estudio (recuperac
         if (!E.handle) await elegirCarpetaEscritura();
         if (!(await asegurarPermiso(E.handle))) { avisar('Sin permiso para escribir en la carpeta.'); return; }
         const p = calcularPlan();
-        for (const n of p.imagenes) {   // primero las imágenes: así ningún JSON apunta a un archivo que todavía no está
+        for (const n of p.imagenes) {
           await escribirArchivo(E.handle, `img/${n}`, E.imgs.get(n));
           E.imgExistentes.add(n);
           E.imgNuevas.delete(n);
